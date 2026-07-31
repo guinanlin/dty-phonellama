@@ -36,8 +36,10 @@ android {
     applicationId = "com.phonellama.app"
     minSdk = 31
     targetSdk = 35
-    versionCode = 30
-    versionName = "1.0.13"
+    versionCode = providers.environmentVariable("VERSION_CODE")
+        .map { it.toInt() }
+        .getOrElse(10014)
+    versionName = providers.environmentVariable("VERSION_NAME").getOrElse("1.0.14")
 
     // Needed for HuggingFace auth workflows.
     // Use the scheme of the "Redirect URLs" in HuggingFace app.
@@ -49,11 +51,24 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
+  signingConfigs {
+    create("phonellamaRelease") {
+      val keystorePath = providers.environmentVariable("RELEASE_KEYSTORE_PATH")
+      val storePassword = providers.environmentVariable("RELEASE_STORE_PASSWORD")
+      val keyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS")
+      val keyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD")
+      if (keystorePath.isPresent) storeFile = file(keystorePath.get())
+      if (storePassword.isPresent) this.storePassword = storePassword.get()
+      if (keyAlias.isPresent) this.keyAlias = keyAlias.get()
+      if (keyPassword.isPresent) this.keyPassword = keyPassword.get()
+    }
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("debug")
+      signingConfig = signingConfigs.getByName("phonellamaRelease")
     }
   }
   compileOptions {
