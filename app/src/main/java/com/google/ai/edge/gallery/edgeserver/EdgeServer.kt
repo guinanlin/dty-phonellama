@@ -24,6 +24,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonReader
 import fi.iki.elonen.NanoHTTPD
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -61,6 +62,8 @@ class EdgeServer(
     // DO NOT raise this above 7000 without also raising maxContextLength in the catalog,
     // or you will re-introduce SIGSEGV (SEGV_ACCERR) in liblitertlm_jni.so.
     private const val MAX_PROMPT_CHARS = 5000
+    // Keep raw JSON body reads bounded before parsing them with Gson.
+    private const val MAX_JSON_BODY_BYTES = 10L * 1024L * 1024L
     // Sentinel pushed to the SSE queue to signal end-of-stream.
     // Cannot use null — LinkedBlockingQueue.offer(null) throws NullPointerException.
     private const val STREAM_EOF = "\u0000EOF"
@@ -273,9 +276,8 @@ class EdgeServer(
 
   private fun handleSetConfig(session: IHTTPSession): Response {
     return try {
-      val bodyFiles = HashMap<String, String>()
-      session.parseBody(bodyFiles)
-      val body = bodyFiles["postData"] ?: return errorResponse(400, "Empty body")
+      val body = readJsonBody(session)
+      if (body.isEmpty()) return errorResponse(400, "Empty body")
       val obj = JsonParser.parseString(body).asJsonObject
       if (obj.has("settle_ms"))          config.settleMsStr    = obj.get("settle_ms").asString
       if (obj.has("skip_close"))         config.skipClose      = obj.get("skip_close").asBoolean
@@ -348,13 +350,11 @@ class EdgeServer(
   }
 
   private fun handleChatCompletions(session: IHTTPSession): Response {
-    val bodyFiles = HashMap<String, String>()
-    try {
-      session.parseBody(bodyFiles)
+    val bodyStr = try {
+      readJsonBody(session)
     } catch (e: Exception) {
       return errorResponse(400, "Failed to parse request body: ${e.message}")
     }
-    val bodyStr = bodyFiles["postData"] ?: ""
     if (bodyStr.isEmpty()) return errorResponse(400, "Empty request body")
 
     val body: JsonObject = try {
@@ -389,6 +389,38 @@ class EdgeServer(
 
     return if (stream) handleStreamingResponse(model, helper, prompt, requestId, modelId)
     else handleNonStreamingResponse(model, helper, prompt, requestId, modelId, hasTools)
+  }
+
+  /**
+   * Reads a JSON request without going through NanoHTTPD's parseBody().
+   *
+   * NanoHTTPD's ContentType.getEncoding() defaults to US-ASCII when a
+   * Content-Type header has no charset. Most JSON clients send only
+   * "application/json", so parseBody() corrupts non-ASCII UTF-8 prompts before
+   * Gson sees them. JSON request bodies are UTF-8 by default (RFC 8259).
+   */
+  private fun readJsonBody(session: IHTTPSession): String {
+    val contentLength = session.headers.entries
+      .firstOrNull { it.key.equals("content-length", ignoreCase = true) }
+      ?.value
+      ?.toLongOrNull()
+      ?: throw IllegalArgumentException("Content-Length header is required")
+
+    if (contentLength < 0 || contentLength > MAX_JSON_BODY_BYTES) {
+      throw IllegalArgumentException("Invalid request body size: $contentLength bytes")
+    }
+
+    val input = session.inputStream
+    val body = ByteArrayOutputStream(contentLength.toInt())
+    val buffer = ByteArray(8192)
+    var remaining = contentLength
+    while (remaining > 0) {
+      val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+      if (read < 0) throw IllegalArgumentException("Unexpected end of request body")
+      body.write(buffer, 0, read)
+      remaining -= read
+    }
+    return String(body.toByteArray(), Charsets.UTF_8)
   }
 
   /**
