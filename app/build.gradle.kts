@@ -31,6 +31,7 @@ plugins {
 android {
   namespace = "com.google.ai.edge.gallery"
   compileSdk = 35
+  ndkVersion = "27.2.12479018"
 
   defaultConfig {
     applicationId = "com.phonellama.app"
@@ -49,6 +50,9 @@ android {
     manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    ndk {
+      abiFilters += "arm64-v8a"
+    }
   }
 
   signingConfigs {
@@ -69,6 +73,12 @@ android {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("phonellamaRelease")
+    }
+  }
+  externalNativeBuild {
+    cmake {
+      path = file("src/main/cpp/CMakeLists.txt")
+      version = "3.22.1"
     }
   }
   compileOptions {

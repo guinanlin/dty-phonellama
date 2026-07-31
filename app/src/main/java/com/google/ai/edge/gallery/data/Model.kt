@@ -41,6 +41,7 @@ enum class RuntimeType {
   @SerializedName("unknown") UNKNOWN,
   @SerializedName("litert_lm") LITERT_LM,
   @SerializedName("aicore") AICORE,
+  @SerializedName("llama_cpp_asr") LLAMA_CPP_ASR,
 }
 
 enum class AICoreModelReleaseStage {

@@ -28,6 +28,36 @@ object PhoneLlamaCatalog {
   val EXTENDED_MODELS: List<AllowedModel> = listOf(
 
     // -----------------------------------------------------------------------
+    // SenseVoiceSmall q8  (FunAudioLLM)
+    // Native ggml/llama.cpp ASR runtime. The VAD model is bundled in assets.
+    // -----------------------------------------------------------------------
+    AllowedModel(
+      name = "SenseVoice-Small",
+      modelId = "FunAudioLLM/SenseVoiceSmall-GGUF",
+      modelFile = "sensevoice-small-q8.gguf",
+      commitHash = "main",
+      description = "SenseVoiceSmall q8 local speech recognition for Chinese, English, " +
+        "Japanese, Korean, Cantonese, emotion and audio-event tags (~254 MB).",
+      sizeInBytes = 254_000_000L,
+      minDeviceMemoryInGb = 4,
+      defaultConfig = DefaultConfig(
+        topK = 1,
+        topP = 1.0f,
+        temperature = 0.0f,
+        accelerators = "cpu",
+        visionAccelerator = null,
+        maxContextLength = null,
+        maxTokens = 0,
+      ),
+      taskTypes = listOf(BuiltInTaskId.LLM_ASK_AUDIO),
+      bestForTaskTypes = listOf(BuiltInTaskId.LLM_ASK_AUDIO),
+      llmSupportAudio = true,
+      runtimeType = RuntimeType.LLAMA_CPP_ASR,
+      url = "https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF/resolve/main/" +
+        "sensevoice-small-q8.gguf?download=true",
+    ),
+
+    // -----------------------------------------------------------------------
     // Qwen3-0.6B  (Alibaba Qwen3)
     // Excellent speed for its size; Qwen3 supports both thinking and
     // non-thinking modes and has strong function/tool-calling capability.

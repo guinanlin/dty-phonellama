@@ -41,12 +41,12 @@ import com.google.ai.edge.gallery.data.DownloadRepository
 import com.google.ai.edge.gallery.data.EMPTY_MODEL
 import com.google.ai.edge.gallery.data.IMPORTS_DIR
 import com.google.ai.edge.gallery.data.Model
+import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.ModelAllowlist
 import com.google.ai.edge.gallery.data.ModelCapability
 import com.google.ai.edge.gallery.data.ModelDownloadStatus
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
 import com.google.ai.edge.gallery.data.NumberSliderConfig
-import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.SOC
 import com.google.ai.edge.gallery.data.SystemPromptRepository
 import com.google.ai.edge.gallery.data.TMP_FILE_EXT
@@ -56,6 +56,8 @@ import com.google.ai.edge.gallery.data.PhoneLlamaCatalog
 import com.google.ai.edge.gallery.data.createLlmChatConfigs
 import com.google.ai.edge.gallery.edgeserver.EdgeServer
 import com.google.ai.edge.gallery.edgeserver.EdgeServerManager
+import com.google.ai.edge.gallery.runtime.asr.AsrEngine
+import com.google.ai.edge.gallery.runtime.asr.SenseVoiceEngine
 import com.google.ai.edge.gallery.proto.AccessTokenData
 import com.google.ai.edge.gallery.proto.ImportedModel
 import com.google.ai.edge.gallery.proto.Theme
@@ -553,7 +555,14 @@ constructor(
             model = model,
             status = ModelInitializationStatusType.INITIALIZED,
           )
-          EdgeServerManager.bindModel(model, model.runtimeHelper, model.displayName)
+          if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR) {
+            val engine = model.instance as? AsrEngine
+            if (engine != null) {
+              EdgeServerManager.bindAsrEngine(model, engine, model.displayName)
+            }
+          } else {
+            EdgeServerManager.bindModel(model, model.runtimeHelper, model.displayName)
+          }
           if (model.cleanUpAfterInit) {
             Log.d(TAG, "Model '${model.name}' needs cleaning up after init.")
             cleanupModel(context = context, task = task, model = model)
@@ -574,14 +583,24 @@ constructor(
 
       // Call the model initialization function.
       val systemPrompt = SystemPromptHelper.getEffectiveSystemPrompt(systemPromptRepository, task)
-      getCustomTaskByTaskId(id = task.id)
-        ?.initializeModelFn(
-          context = context,
-          coroutineScope = viewModelScope,
-          model = model,
-          systemInstruction = Contents.of(systemPrompt),
-          onDone = onDoneFn,
-        )
+      if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR) {
+        try {
+          model.instance = SenseVoiceEngine(context = context, model = model)
+          onDoneFn("")
+        } catch (e: Throwable) {
+          model.instance = null
+          onDoneFn(e.message ?: "Failed to initialize SenseVoice")
+        }
+      } else {
+        getCustomTaskByTaskId(id = task.id)
+          ?.initializeModelFn(
+            context = context,
+            coroutineScope = viewModelScope,
+            model = model,
+            systemInstruction = Contents.of(systemPrompt),
+            onDone = onDoneFn,
+          )
+      }
       } // end initMutex.withLock
     }
   }
@@ -595,6 +614,25 @@ constructor(
   ) {
     if (instanceToCleanUp != null && instanceToCleanUp !== model.instance) {
       Log.d(TAG, "Stale cleanup request for ${model.name}. Aborting.")
+      onDone()
+      return
+    }
+
+    if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR && model.instance != null) {
+      try {
+        (model.instance as? AsrEngine)?.close()
+      } catch (e: Throwable) {
+        Log.e(TAG, "Error cleaning up SenseVoice '${model.name}'", e)
+      }
+      if (EdgeServerManager.getServer()?.activeModel == model) {
+        EdgeServerManager.unbindAsrEngine()
+      }
+      model.instance = null
+      model.initializing = false
+      updateModelInitializationStatus(
+        model = model,
+        status = ModelInitializationStatusType.NOT_INITIALIZED,
+      )
       onDone()
       return
     }

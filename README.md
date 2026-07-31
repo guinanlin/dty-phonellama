@@ -128,6 +128,27 @@ Standard OpenAI chat completions. Supports:
 - `max_tokens` override
 - `tools` array for function-calling (returned as structured JSON from the model)
 
+### `POST /v1/audio/transcriptions`
+
+When **SenseVoice-Small** is active, the server accepts a raw WAV body or an
+OpenAI-compatible multipart upload:
+
+```bash
+curl -X POST http://PHONE-IP:8888/v1/audio/transcriptions \
+  -F "file=@speech.wav"
+```
+
+The response contains the transcription and, when present, language, emotion,
+and audio-event labels:
+
+```json
+{"text":"你好，这是 PhoneLlama。","language":"zh","events":[]}
+```
+
+SenseVoice is downloaded from the Audio Scribe model list and runs locally on
+the phone with the bundled FSMN-VAD model. The first request loads the 254 MB
+q8 model and may take longer than subsequent requests.
+
 ### `POST /activate`
 
 Switch the active model without restarting the server.

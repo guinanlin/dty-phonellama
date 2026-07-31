@@ -19,6 +19,7 @@ package com.google.ai.edge.gallery.edgeserver
 import android.util.Log
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.runtime.LlmModelHelper
+import com.google.ai.edge.gallery.runtime.asr.AsrEngine
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -64,6 +65,7 @@ class EdgeServer(
     private const val MAX_PROMPT_CHARS = 5000
     // Keep raw JSON body reads bounded before parsing them with Gson.
     private const val MAX_JSON_BODY_BYTES = 10L * 1024L * 1024L
+    private const val MAX_AUDIO_BODY_BYTES = 60L * 1024L * 1024L
     // Sentinel pushed to the SSE queue to signal end-of-stream.
     // Cannot use null — LinkedBlockingQueue.offer(null) throws NullPointerException.
     private const val STREAM_EOF = "\u0000EOF"
@@ -86,6 +88,7 @@ class EdgeServer(
 
   @Volatile var activeModel: Model? = null
   @Volatile var activeModelHelper: LlmModelHelper? = null
+  @Volatile var activeAsrEngine: AsrEngine? = null
   @Volatile var activeModelDisplayName: String = ""
   @Volatile var modelFinder: (() -> Unit)? = null
   @Volatile var knownModelNames: List<String> = emptyList()
@@ -162,6 +165,8 @@ class EdgeServer(
         uri == "/health" -> handleHealth()
         uri == "/v1/models" && method == Method.GET -> handleListModels()
         uri == "/v1/chat/completions" && method == Method.POST -> handleChatCompletions(session)
+        uri == "/v1/audio/transcriptions" && method == Method.POST ->
+          handleAudioTranscription(session)
         uri.startsWith("/v1/models/") && uri.endsWith("/activate") && method == Method.POST ->
           handleActivateModel(uri.removePrefix("/v1/models/").removeSuffix("/activate"))
         uri == "/admin/config" && method == Method.GET -> handleGetConfig()
@@ -389,6 +394,62 @@ class EdgeServer(
 
     return if (stream) handleStreamingResponse(model, helper, prompt, requestId, modelId)
     else handleNonStreamingResponse(model, helper, prompt, requestId, modelId, hasTools)
+  }
+
+  private fun handleAudioTranscription(session: IHTTPSession): Response {
+    val engine = activeAsrEngine
+      ?: return errorResponse(503, "No SenseVoice ASR model loaded")
+    val contentType = session.headers.entries
+      .firstOrNull { it.key.equals("content-type", ignoreCase = true) }
+      ?.value
+      ?.lowercase()
+      ?: ""
+    return try {
+      val wavBytes = if (contentType.startsWith("multipart/form-data")) {
+        val files = HashMap<String, String>()
+        session.parseBody(files)
+        val filePath = files["file"] ?: files["postData"]
+          ?: return errorResponse(400, "Multipart field 'file' is required")
+        java.io.File(filePath).readBytes()
+      } else {
+        readBinaryBody(session, MAX_AUDIO_BODY_BYTES)
+      }
+      if (wavBytes.isEmpty()) return errorResponse(400, "Empty audio request body")
+      val result = engine.transcribe(wavBytes)
+      val response = JsonObject().apply {
+        addProperty("text", result.text)
+        result.language?.let { addProperty("language", it) }
+        result.emotion?.let { addProperty("emotion", it) }
+        add("events", gson.toJsonTree(result.events))
+      }
+      EdgeServerManager.incrementRequestCount()
+      newFixedLengthResponse(Response.Status.OK, MIME_JSON, gson.toJson(response)).applyCors()
+    } catch (e: Exception) {
+      Log.e(TAG, "Audio transcription failed", e)
+      errorResponse(500, "Audio transcription failed: ${e.message ?: "unknown error"}")
+    }
+  }
+
+  private fun readBinaryBody(session: IHTTPSession, maxBytes: Long): ByteArray {
+    val contentLength = session.headers.entries
+      .firstOrNull { it.key.equals("content-length", ignoreCase = true) }
+      ?.value
+      ?.toLongOrNull()
+      ?: throw IllegalArgumentException("Content-Length header is required")
+    if (contentLength <= 0L || contentLength > maxBytes) {
+      throw IllegalArgumentException("Invalid audio body size: $contentLength bytes")
+    }
+    val input = session.inputStream
+    val body = ByteArrayOutputStream(contentLength.toInt())
+    val buffer = ByteArray(8192)
+    var remaining = contentLength
+    while (remaining > 0L) {
+      val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+      if (read < 0) throw IllegalArgumentException("Unexpected end of audio body")
+      body.write(buffer, 0, read)
+      remaining -= read
+    }
+    return body.toByteArray()
   }
 
   /**

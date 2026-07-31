@@ -100,6 +100,7 @@ fun AudioRecorderPanel(
   onAmplitudeChanged: (Int /* 0-32767 */) -> Unit,
   onSendAudioClip: (ByteArray) -> Unit,
   onClose: () -> Unit,
+  maxDurationSec: Int = MAX_AUDIO_CLIP_DURATION_SEC,
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -188,6 +189,7 @@ fun AudioRecorderPanel(
                 audioRecordState = audioRecordState,
                 audioStream = audioStream,
                 elapsedMs = elapsedMs,
+                maxDurationSec = maxDurationSec,
                 onAmplitudeChanged = onAmplitudeChanged,
                 onMaxDurationReached = {
                   val curRecordedBytes =
@@ -226,6 +228,7 @@ private suspend fun startRecording(
   audioRecordState: MutableState<AudioRecord?>,
   audioStream: ByteArrayOutputStream,
   elapsedMs: MutableLongState,
+  maxDurationSec: Int,
   onAmplitudeChanged: (Int) -> Unit,
   onMaxDurationReached: () -> Unit,
 ) {
@@ -260,7 +263,7 @@ private suspend fun startRecording(
           audioStream.write(buffer, 0, bytesRead)
         }
         elapsedMs.longValue = System.currentTimeMillis() - startMs
-        if (elapsedMs.longValue >= MAX_AUDIO_CLIP_DURATION_SEC * 1000) {
+        if (elapsedMs.longValue >= maxDurationSec * 1000) {
           onMaxDurationReached()
           break
         }

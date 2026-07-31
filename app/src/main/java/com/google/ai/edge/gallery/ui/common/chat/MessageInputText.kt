@@ -284,6 +284,9 @@ fun MessageInputText(
             handleAudioWavSelected(
               context = context,
               uri = uri,
+              maxSeconds = if (
+                modelManagerUiState.selectedModel.runtimeType == RuntimeType.LLAMA_CPP_ASR
+              ) 300 else 30,
               onAudioSelected = { audioClip ->
                 updatePickedAudioClips(
                   listOf(
@@ -668,6 +671,9 @@ fun MessageInputText(
           true ->
             AudioRecorderPanel(
               task = task,
+              maxDurationSec = if (
+                modelManagerUiState.selectedModel.runtimeType == RuntimeType.LLAMA_CPP_ASR
+              ) 300 else 30,
               onSendAudioClip = { audioData ->
                 scope.launch {
                   updatePickedAudioClips(
@@ -947,9 +953,14 @@ private fun handleImagesSelected(
 private fun handleAudioWavSelected(
   context: Context,
   uri: Uri,
+  maxSeconds: Int,
   onAudioSelected: (AudioClip) -> Unit,
 ) {
-  convertWavToMonoWithMaxSeconds(context = context, stereoUri = uri)?.let { audioClip ->
+  convertWavToMonoWithMaxSeconds(
+    context = context,
+    stereoUri = uri,
+    maxSeconds = maxSeconds,
+  )?.let { audioClip ->
     onAudioSelected(audioClip)
   }
 }

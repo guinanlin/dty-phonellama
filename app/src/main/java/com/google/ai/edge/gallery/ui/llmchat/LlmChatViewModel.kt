@@ -23,6 +23,8 @@ import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.common.SystemPromptHelper
 import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.data.Model
+import com.google.ai.edge.gallery.data.RuntimeType
+import com.google.ai.edge.gallery.runtime.asr.AsrEngine
 import com.google.ai.edge.gallery.data.SystemPromptRepository
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.runtime.runtimeHelper
@@ -142,6 +144,47 @@ open class LlmChatViewModelBase(
       val audioClips: MutableList<ByteArray> = mutableListOf()
       for (audioMessage in audioMessages) {
         audioClips.add(audioMessage.genByteArrayForWav())
+      }
+
+      if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR) {
+        try {
+          val engine = model.instance as? AsrEngine
+            ?: throw IllegalStateException("SenseVoice ASR engine is not initialized")
+          val start = System.currentTimeMillis()
+          val results = audioClips.map { engine.transcribe(it) }
+          val text = results.joinToString("\n") { result ->
+            buildString {
+              append(result.text)
+              val labels = listOfNotNull(
+                result.language?.let { "language=$it" },
+                result.emotion?.let { "emotion=$it" },
+                result.events.takeIf { it.isNotEmpty() }?.joinToString(",")?.let { "events=$it" },
+              )
+              if (labels.isNotEmpty()) append("\n\n[${labels.joinToString(" ")}]")
+            }
+          }
+          removeLastMessage(model = model)
+          addMessage(
+            model = model,
+            message = ChatMessageText(
+              content = text,
+              side = ChatSide.AGENT,
+              latencyMs = (System.currentTimeMillis() - start).toFloat(),
+              accelerator = "CPU",
+            ),
+          )
+          setPreparing(false)
+          setInProgress(false)
+          onFirstToken(model)
+          onDone()
+        } catch (e: Throwable) {
+          Log.e(TAG, "SenseVoice transcription failed", e)
+          setInProgress(false)
+          setPreparing(false)
+          removeLastMessage(model = model)
+          onError(e.message ?: "SenseVoice transcription failed")
+        }
+        return@launch
       }
 
       var firstRun = true
@@ -308,7 +351,9 @@ open class LlmChatViewModelBase(
       removeLastMessage(model = model)
     }
     setInProgress(false)
-    model.runtimeHelper.stopResponse(model)
+    if (model.runtimeType != RuntimeType.LLAMA_CPP_ASR) {
+      model.runtimeHelper.stopResponse(model)
+    }
     Log.d(TAG, "Done stopping response")
   }
 
@@ -326,6 +371,12 @@ open class LlmChatViewModelBase(
       setIsResettingSession(true)
       clearAllMessages(model = model)
       stopResponse(model = model)
+
+      if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR) {
+        setIsResettingSession(false)
+        onDone()
+        return@launch
+      }
 
       while (true) {
         try {

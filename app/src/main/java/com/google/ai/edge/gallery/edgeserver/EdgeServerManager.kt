@@ -22,6 +22,7 @@ import androidx.core.app.NotificationCompat
 import com.google.ai.edge.gallery.MainActivity
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.runtime.LlmModelHelper
+import com.google.ai.edge.gallery.runtime.asr.AsrEngine
 import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +56,7 @@ object EdgeServerManager {
   // Persisted binding — survives server start/stop cycles
   private var boundModel: Model? = null
   private var boundHelper: LlmModelHelper? = null
+  private var boundAsrEngine: AsrEngine? = null
   private var boundDisplayName: String = ""
   private var _knownModelNames: List<String> = emptyList()
 
@@ -117,6 +119,7 @@ object EdgeServerManager {
     val name = displayName.ifEmpty { model.displayName.ifEmpty { model.name } }
     boundModel = model
     boundHelper = helper
+    boundAsrEngine = null
     boundDisplayName = name
     applyBoundModelToServer()
     server?.pendingModelName = null   // switch completed successfully
@@ -128,11 +131,39 @@ object EdgeServerManager {
   fun unbindModel() {
     boundModel = null
     boundHelper = null
+    boundAsrEngine = null
     boundDisplayName = ""
     server?.activeModel = null
     server?.activeModelHelper = null
+    server?.activeAsrEngine = null
     server?.activeModelDisplayName = ""
     _state.value = _state.value.copy(activeModelName = "")
+  }
+
+  fun bindAsrEngine(model: Model, engine: AsrEngine, displayName: String = "") {
+    val name = displayName.ifEmpty { model.displayName.ifEmpty { model.name } }
+    boundModel = model
+    boundHelper = null
+    boundAsrEngine = engine
+    boundDisplayName = name
+    applyBoundModelToServer()
+    server?.pendingModelName = null
+    server?.lastModelLoadError = null
+    _state.value = _state.value.copy(activeModelName = name)
+    Log.i(TAG, "ASR model bound: $name (server running=${server != null})")
+  }
+
+  fun unbindAsrEngine() {
+    boundAsrEngine = null
+    if (boundHelper == null) {
+      boundModel = null
+      boundDisplayName = ""
+      server?.activeModel = null
+      server?.activeModelHelper = null
+      server?.activeAsrEngine = null
+      server?.activeModelDisplayName = ""
+      _state.value = _state.value.copy(activeModelName = "")
+    }
   }
 
   /**
@@ -143,6 +174,23 @@ object EdgeServerManager {
   fun unloadActiveModel(scope: CoroutineScope, onDone: () -> Unit = {}) {
     val model = boundModel
     val helper = boundHelper
+    val asrEngine = boundAsrEngine
+    if (model != null && asrEngine != null) {
+      unbindAsrEngine()
+      scope.launch(Dispatchers.Default) {
+        try {
+          asrEngine.close()
+          model.instance = null
+          model.initializing = false
+          Log.i(TAG, "ASR model unloaded successfully")
+        } catch (e: Exception) {
+          Log.e(TAG, "Error during ASR model unload: ${e.message}")
+        } finally {
+          onDone()
+        }
+      }
+      return
+    }
     if (model == null || helper == null) {
       Log.w(TAG, "unloadActiveModel: nothing to unload")
       onDone()
@@ -200,6 +248,7 @@ object EdgeServerManager {
     val s = server ?: return
     s.activeModel = boundModel
     s.activeModelHelper = boundHelper
+    s.activeAsrEngine = boundAsrEngine
     s.activeModelDisplayName = boundDisplayName
     s.modelSwitcher = modelSwitcher
     s.modelLister = modelLister
