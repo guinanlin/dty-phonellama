@@ -10,8 +10,8 @@ URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${VERSION}/sherpa-
 
 mkdir -p "$OUT_DIR"
 if [[ -f "$OUT_FILE" ]]; then
-  size="$(wc -c < "$OUT_FILE" | tr -d ' ')"
-  if [[ "$size" -gt 40000000 ]]; then
+  if unzip -l "$OUT_FILE" 2>/dev/null | grep -q 'classes.jar'; then
+    size="$(wc -c < "$OUT_FILE" | tr -d ' ')"
     echo "Already present: $OUT_FILE ($size bytes)"
     exit 0
   fi

@@ -88,3 +88,25 @@ test -f "$OUT_DIR/libsherpa-onnx-jni.so" || { echo "missing libsherpa-onnx-jni.s
 
 echo "QNN natives ready in $OUT_DIR ($copied libs)"
 ls -lh "$OUT_DIR" | head -40
+
+# Drop jni from the stock AAR so app/src/main/jniLibs wins without packaging pickFirst
+# (AGP packaging DSL conflicts with the oss-licenses plugin in this project).
+AAR="$(ls -1 "$ROOT"/app/libs/sherpa-onnx-*.aar 2>/dev/null | head -1 || true)"
+if [[ -n "$AAR" && -f "$AAR" ]]; then
+  echo "Stripping jni/ from $AAR to avoid duplicate .so with jniLibs..."
+  STRIP_WORK="$CACHE_DIR/strip-aar-$$"
+  mkdir -p "$STRIP_WORK"
+  unzip -qo "$AAR" -d "$STRIP_WORK"
+  if [[ -d "$STRIP_WORK/jni" ]]; then
+    rm -rf "$STRIP_WORK/jni"
+    (
+      cd "$STRIP_WORK"
+      zip -qr "$AAR.tmp" .
+    )
+    mv "$AAR.tmp" "$AAR"
+    echo "AAR jni stripped: $AAR ($(wc -c < "$AAR" | tr -d ' ') bytes)"
+  else
+    echo "AAR has no jni/ directory; leaving as-is"
+  fi
+  rm -rf "$STRIP_WORK"
+fi

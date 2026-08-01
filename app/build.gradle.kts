@@ -87,12 +87,6 @@ android {
     compose = true
     buildConfig = true
   }
-  packaging {
-    jniLibs {
-      // Prefer app/src/main/jniLibs (QNN-enabled sherpa natives) over AAR copies.
-      pickFirsts += listOf("**/lib*.so")
-    }
-  }
 }
 
 kotlin {

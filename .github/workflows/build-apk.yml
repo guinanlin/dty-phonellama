@@ -83,11 +83,14 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.PHONELLAMA_KEY_PASSWORD }}
         run: |
           mkdir -p build-logs
+          set -o pipefail
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee build-logs/gradle.log
           else
             ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-logs/gradle.log
           fi
+          echo "APK outputs:"
+          find app/build/outputs/apk -type f -name '*.apk' -ls || true
 
       - name: Upload build logs
         if: always()
