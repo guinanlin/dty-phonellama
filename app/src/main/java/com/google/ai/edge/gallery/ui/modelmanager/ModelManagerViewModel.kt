@@ -1352,10 +1352,25 @@ constructor(
       return false
     }
 
-    // A model is partially downloaded when the tmp file exists.
-    val tmpFilePath =
-      model.getPath(context = context, fileName = "${model.downloadFileName}.$TMP_FILE_EXT")
-    return File(tmpFilePath).exists()
+    // Tmp files always live under {normalizedName}/{version}/, never under unzipDir.
+    // Do NOT use model.getPath() here: for zip models getPath() returns the unzip
+    // directory and ignores fileName, which would wrongly treat a completed extract
+    // as a partial download and auto-resume on next launch.
+    val versionDir =
+      File(
+        externalFilesDir,
+        listOf(model.normalizedName, model.version).joinToString(File.separator),
+      )
+    val mainTmp = File(versionDir, "${model.downloadFileName}.$TMP_FILE_EXT")
+    if (mainTmp.isFile) {
+      return true
+    }
+    for (extra in model.extraDataFiles) {
+      if (File(versionDir, "${extra.downloadFileName}.$TMP_FILE_EXT").isFile) {
+        return true
+      }
+    }
+    return false
   }
 
   private fun createEmptyUiState(): ModelManagerUiState {
@@ -1595,23 +1610,30 @@ constructor(
     var receivedBytes = 0L
     var totalBytes = 0L
 
-    // Partially downloaded.
-    if (isModelPartiallyDownloaded(model = model)) {
-      status = ModelDownloadStatusType.PARTIALLY_DOWNLOADED
-      val tmpFilePath =
-        model.getPath(context = context, fileName = "${model.downloadFileName}.$TMP_FILE_EXT")
-      val tmpFile = File(tmpFilePath)
-      receivedBytes = tmpFile.length()
-      totalBytes = model.totalBytes
-      Log.d(TAG, "${model.name} is partially downloaded. $receivedBytes/$totalBytes")
-    }
-    // Fully downloaded.
-    else if (isModelDownloaded(model = model)) {
+    // Prefer completed over partial. Partial detection must not outrank a finished zip extract.
+    if (isModelDownloaded(model = model)) {
       status = ModelDownloadStatusType.SUCCEEDED
       Log.d(TAG, "${model.name} has been downloaded.")
-    }
-    // Not downloaded.
-    else {
+    } else if (isModelPartiallyDownloaded(model = model)) {
+      status = ModelDownloadStatusType.PARTIALLY_DOWNLOADED
+      val versionDir =
+        File(
+          externalFilesDir,
+          listOf(model.normalizedName, model.version).joinToString(File.separator),
+        )
+      val mainTmp = File(versionDir, "${model.downloadFileName}.$TMP_FILE_EXT")
+      receivedBytes =
+        if (mainTmp.isFile) {
+          mainTmp.length()
+        } else {
+          model.extraDataFiles
+            .map { File(versionDir, "${it.downloadFileName}.$TMP_FILE_EXT") }
+            .filter { it.isFile }
+            .sumOf { it.length() }
+        }
+      totalBytes = model.totalBytes
+      Log.d(TAG, "${model.name} is partially downloaded. $receivedBytes/$totalBytes")
+    } else {
       Log.d(TAG, "${model.name} has not been downloaded.")
     }
 
@@ -1736,7 +1758,20 @@ constructor(
           listOf(model.normalizedName, version, model.unzipDir).joinToString(File.separator)
         )
 
-    return downloadedFileExists || unzippedDirectoryExists
+    val primaryReady = downloadedFileExists || unzippedDirectoryExists
+    if (!primaryReady) {
+      return false
+    }
+
+    // Extra files (e.g. CPU ONNX fallback) must also be fully present.
+    for (extra in model.extraDataFiles) {
+      val extraPath =
+        listOf(model.normalizedName, version, extra.downloadFileName).joinToString(File.separator)
+      if (!isFileInExternalFilesDir(extraPath)) {
+        return false
+      }
+    }
+    return true
   }
 }
 
