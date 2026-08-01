@@ -126,6 +126,20 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
           }
           Log.d(TAG, "About to download: $allFiles")
 
+          if (
+            isDownloadAlreadyComplete(
+              modelDir = modelDir,
+              version = version,
+              mainFileName = fileName,
+              isZip = isZip,
+              unzippedDir = unzippedDir,
+              extraFileNames = extraDataFileNames,
+            )
+          ) {
+            Log.d(TAG, "All model files already on disk; skipping download")
+            return@withContext Result.success()
+          }
+
           // Download them in sequence.
           // TODO: maybe consider downloading them in parallel.
           var downloadedBytes = 0L
@@ -414,6 +428,34 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
   }
 
   /** If the archive unpacked a single top-level folder, hoist its contents up. */
+  private fun isDownloadAlreadyComplete(
+    modelDir: String,
+    version: String,
+    mainFileName: String,
+    isZip: Boolean,
+    unzippedDir: String?,
+    extraFileNames: List<String>,
+  ): Boolean {
+    val baseDir = File(externalFilesDir, listOf(modelDir, version).joinToString(File.separator))
+    val mainFile = File(baseDir, mainFileName)
+    val unzipReady =
+      isZip &&
+        !unzippedDir.isNullOrEmpty() &&
+        File(baseDir, unzippedDir).isDirectory &&
+        File(baseDir, unzippedDir).walkTopDown().any { it.isFile }
+    val primaryReady = mainFile.isFile || unzipReady
+    if (!primaryReady) {
+      return false
+    }
+    for (extra in extraFileNames) {
+      if (extra.isEmpty()) continue
+      if (!File(baseDir, extra).isFile) {
+        return false
+      }
+    }
+    return true
+  }
+
   private fun flattenSingleTopLevelDir(destDir: File) {
     val children = destDir.listFiles()?.filter { it.name != "." && it.name != ".." } ?: return
     if (children.size != 1 || !children[0].isDirectory) return

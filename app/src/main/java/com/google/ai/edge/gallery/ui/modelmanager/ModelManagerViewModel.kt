@@ -327,6 +327,22 @@ constructor(
   }
 
   open fun downloadModel(task: Task?, model: Model) {
+    // Never wipe and re-fetch when artifacts are already on disk (e.g. stale
+    // WorkManager CANCELLED callback overwrote SUCCEEDED in UI state).
+    if (model.runtimeType != RuntimeType.AICORE && isModelDownloaded(model = model)) {
+      Log.d(TAG, "Model '${model.name}' is already downloaded; skipping download request")
+      setDownloadStatus(
+        curModel = model,
+        status =
+          ModelDownloadStatus(
+            status = ModelDownloadStatusType.SUCCEEDED,
+            receivedBytes = model.totalBytes,
+            totalBytes = model.totalBytes,
+          ),
+      )
+      return
+    }
+
     // Update status.
     setDownloadStatus(
       curModel = model,
@@ -677,22 +693,39 @@ constructor(
   }
 
   fun setDownloadStatus(curModel: Model, status: ModelDownloadStatus) {
+    // Disk is the source of truth: ignore stale worker cancellations that would
+    // mark a fully downloaded model as NOT_DOWNLOADED and invite a re-download.
+    val effectiveStatus =
+      if (
+        (status.status == ModelDownloadStatusType.FAILED ||
+          status.status == ModelDownloadStatusType.NOT_DOWNLOADED) &&
+          isModelDownloaded(model = curModel)
+      ) {
+        Log.d(
+          TAG,
+          "Ignoring ${status.status} for '${curModel.name}'; model files exist on disk",
+        )
+        status.copy(status = ModelDownloadStatusType.SUCCEEDED)
+      } else {
+        status
+      }
+
     // Update model download progress.
     val curModelDownloadStatus = uiState.value.modelDownloadStatus.toMutableMap()
-    curModelDownloadStatus[curModel.name] = status
+    curModelDownloadStatus[curModel.name] = effectiveStatus
     val newUiState = uiState.value.copy(modelDownloadStatus = curModelDownloadStatus)
 
     // Delete downloaded file if status is failed or not_downloaded.
     if (
-      status.status == ModelDownloadStatusType.FAILED ||
-        status.status == ModelDownloadStatusType.NOT_DOWNLOADED
+      effectiveStatus.status == ModelDownloadStatusType.FAILED ||
+        effectiveStatus.status == ModelDownloadStatusType.NOT_DOWNLOADED
     ) {
       deleteFileFromExternalFilesDir(curModel.downloadFileName)
     }
 
     _uiState.update { newUiState }
 
-    if (status.status == ModelDownloadStatusType.SUCCEEDED && curModel.isLlm) {
+    if (effectiveStatus.status == ModelDownloadStatusType.SUCCEEDED && curModel.isLlm) {
       autoLoadFirstModel()
     }
     // Keep /v1/models in sync whenever download state changes
@@ -1025,18 +1058,29 @@ constructor(
             // Start download for partially downloaded models.
             val downloadStatus = uiState.value.modelDownloadStatus[model.name]?.status
             if (downloadStatus == ModelDownloadStatusType.PARTIALLY_DOWNLOADED) {
-              if (
-                tokenStatusAndData.status == TokenStatus.NOT_EXPIRED &&
-                  tokenStatusAndData.data != null
-              ) {
-                model.accessToken = tokenStatusAndData.data.accessToken
+              if (isModelDownloaded(model = model)) {
+                Log.d(
+                  TAG,
+                  "Model '${model.name}' is complete on disk; clearing stale partial status",
+                )
+                setDownloadStatus(
+                  curModel = model,
+                  status = ModelDownloadStatus(status = ModelDownloadStatusType.SUCCEEDED),
+                )
+              } else {
+                if (
+                  tokenStatusAndData.status == TokenStatus.NOT_EXPIRED &&
+                    tokenStatusAndData.data != null
+                ) {
+                  model.accessToken = tokenStatusAndData.data.accessToken
+                }
+                Log.d(TAG, "Sending a new download request for '${model.name}'")
+                downloadRepository.downloadModel(
+                  task = task,
+                  model = model,
+                  onStatusUpdated = this@ModelManagerViewModel::setDownloadStatus,
+                )
               }
-              Log.d(TAG, "Sending a new download request for '${model.name}'")
-              downloadRepository.downloadModel(
-                task = task,
-                model = model,
-                onStatusUpdated = this@ModelManagerViewModel::setDownloadStatus,
-              )
             }
 
             checkedModelNames.add(model.name)
@@ -1116,6 +1160,11 @@ constructor(
 
         // Convert models in the allowlist.
         val curTasks = getActiveCustomTasks().map { it.task }
+        // Drop stale allowlist entries from prior loads (CustomTask singletons survive
+        // activity recreation). Imported local models are re-added in createUiState().
+        for (task in curTasks) {
+          task.models.removeAll { !it.imported }
+        }
         val nameToModel = mutableMapOf<String, Model>()
         for (allowedModel in modelAllowlist.models) {
           if (allowedModel.disabled == true) {
@@ -1737,6 +1786,21 @@ constructor(
     return false
   }
 
+  private fun isUnzippedModelReady(model: Model, version: String): Boolean {
+    if (externalFilesDir == null) {
+      return false
+    }
+    val unzipDir =
+      File(
+        externalFilesDir,
+        listOf(model.normalizedName, version, model.unzipDir).joinToString(File.separator),
+      )
+    if (!unzipDir.isDirectory) {
+      return false
+    }
+    return unzipDir.walkTopDown().any { it.isFile }
+  }
+
   private fun checkIfModelDownloaded(
     model: Model,
     version: String,
@@ -1752,11 +1816,7 @@ constructor(
             File(model.localModelFilePathOverride).exists()))
 
     val unzippedDirectoryExists =
-      model.isZip &&
-        model.unzipDir.isNotEmpty() &&
-        isFileInExternalFilesDir(
-          listOf(model.normalizedName, version, model.unzipDir).joinToString(File.separator)
-        )
+      model.isZip && model.unzipDir.isNotEmpty() && isUnzippedModelReady(model, version)
 
     val primaryReady = downloadedFileExists || unzippedDirectoryExists
     if (!primaryReady) {
