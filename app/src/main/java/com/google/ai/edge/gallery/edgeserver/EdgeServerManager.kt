@@ -74,7 +74,8 @@ object EdgeServerManager {
     if (server != null) stop(context)
     val host = if (lanMode) "0.0.0.0" else "127.0.0.1"
     val lanIp = getLanIp(context)
-    server = EdgeServer(hostname = host, port = port)
+    val uiHtml = loadUiHtml(context)
+    server = EdgeServer(hostname = host, port = port, uiHtml = uiHtml)
     // Apply any already-bound model immediately so the server is ready right away
     applyBoundModelToServer()
     server?.knownModelNames = _knownModelNames
@@ -266,6 +267,15 @@ object EdgeServerManager {
 
   private var modelSwitcher: ((String) -> Boolean)? = null
   private var modelLister: (() -> List<String>)? = null
+
+  private fun loadUiHtml(context: Context): String {
+    return try {
+      context.assets.open("edge-server-ui.html").use { it.bufferedReader().readText() }
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to load edge-server-ui.html from assets, using fallback UI", e)
+      EdgeServer.DEFAULT_UI_HTML
+    }
+  }
 
   fun getKnownLanIp(context: Context): String = getLanIp(context)
 

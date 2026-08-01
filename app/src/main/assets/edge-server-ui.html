@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhoneLlama - On-device AI inference host</title>
+  <style>
+    :root {
+      --bg: #0f0f1a;
+      --card: #181827;
+      --card-hover: #202032;
+      --text: #e8e8f5;
+      --text-secondary: #9a9ab5;
+      --accent: #7c6cff;
+      --accent-hover: #6b5be6;
+      --success: #4ade80;
+      --warning: #fbbf24;
+      --error: #f87171;
+      --border: #2a2a3d;
+      --code-bg: #0f0f1a;
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.5;
+    }
+    .container { max-width: 820px; margin: 0 auto; padding: 28px 18px; }
+    header { margin-bottom: 24px; }
+    header h1 { font-size: 30px; margin: 0 0 4px; display: flex; align-items: center; gap: 12px; }
+    header p { color: var(--text-secondary); margin: 0; font-size: 15px; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      margin-bottom: 16px;
+      transition: background 0.2s;
+    }
+    .card h2 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--text-secondary);
+      margin: 0 0 12px;
+    }
+    .status { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .status.online { color: var(--success); }
+    .status.offline { color: var(--error); }
+    .status.loading { color: var(--warning); }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .online .status-dot { background: var(--success); box-shadow: 0 0 8px var(--success); }
+    .offline .status-dot { background: var(--error); }
+    .loading .status-dot { background: var(--warning); }
+    .endpoint { color: var(--text-secondary); font-size: 13px; margin-top: 6px; font-family: monospace; }
+    .model-name { font-size: 20px; font-weight: 600; }
+    ul.models { list-style: none; padding: 0; margin: 0; }
+    ul.models li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    ul.models li:last-child { border-bottom: none; }
+    .badge {
+      background: rgba(74, 222, 128, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(74, 222, 128, 0.3);
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, transform 0.05s;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn:active { transform: translateY(1px); }
+    .btn.secondary { background: var(--card-hover); border: 1px solid var(--border); }
+    .btn.secondary:hover { background: #2a2a40; }
+    .btn.success { background: rgba(74, 222, 128, 0.2); color: var(--success); border: 1px solid rgba(74, 222, 128, 0.4); }
+    .btn.success:hover { background: rgba(74, 222, 128, 0.3); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn.full { width: 100%; }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 16px 0 12px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tab-btn.active, .tab-btn:hover {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .endpoint-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .endpoint-card {
+      background: var(--card-hover);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.05s;
+    }
+    .endpoint-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .endpoint-card .method {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-right: 6px;
+    }
+    .method.get { background: rgba(74, 222, 128, 0.15); color: var(--success); }
+    .method.post { background: rgba(124, 108, 255, 0.15); color: var(--accent); }
+    .endpoint-card .path { font-family: monospace; font-size: 13px; color: var(--text); }
+    .endpoint-card .desc { font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+
+    .form-group { margin-bottom: 14px; }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    textarea, input[type="text"], input[type="number"], select {
+      width: 100%;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: vertical;
+    }
+    textarea:focus, input:focus, select:focus { outline: none; border-color: var(--accent); }
+    textarea { min-height: 90px; font-family: monospace; }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+    .checkbox-row input { width: auto; }
+
+    .audio-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .record-btn {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--error);
+      border: none;
+      color: #fff;
+      font-size: 22px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.1s, box-shadow 0.2s;
+    }
+    .record-btn:hover { transform: scale(1.05); }
+    .record-btn.recording {
+      animation: pulse 1.2s infinite;
+      box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7);
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7); }
+      70% { box-shadow: 0 0 0 14px rgba(248, 113, 113, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
+    }
+    .record-time { font-size: 14px; color: var(--text-secondary); align-self: center; }
+    .file-input { display: none; }
+
+    .response-panel {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-top: 16px;
+    }
+    .response-panel h3 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-secondary);
+      margin: 0 0 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .response-meta { font-size: 12px; color: var(--text-secondary); }
+    pre {
+      background: #0a0a14;
+      border-radius: 8px;
+      padding: 12px;
+      overflow-x: auto;
+      font-size: 12px;
+      line-height: 1.5;
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+    .error-text { color: var(--error); }
+    .success-text { color: var(--success); }
+    .hint { font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+
+    .curl-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #a0a0c0;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin-top: 10px;
+      position: relative;
+    }
+    .copy-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: var(--card-hover);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      border-radius: 5px;
+      padding: 2px 8px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .copy-btn:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1><span>🦙</span> PhoneLlama</h1>
+      <p>On-device AI inference host · 本地 AI 推理服务</p>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Server Status</h2>
+        <div id="statusText" class="status loading"><span class="status-dot"></span> Loading...</div>
+        <div id="baseUrl" class="endpoint">-</div>
+      </div>
+      <div class="card">
+        <h2>Active Model</h2>
+        <div id="activeModel" class="model-name">-</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Available Models</h2>
+      <ul id="modelList" class="models"><li>Loading...</li></ul>
+    </div>
+
+    <div class="card">
+      <h2>Open App</h2>
+      <a class="btn full" href="phonellama://open">Open PhoneLlama App</a>
+    </div>
+
+    <div class="card playground">
+      <h2>API Playground · 接口调试台</h2>
+      <p class="hint">点击任意接口卡片可快速切换；下方可直接发起请求并查看响应。</p>
+
+      <div class="endpoint-grid" id="endpointGrid">
+        <!-- Filled by JS -->
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="chat">Chat</button>
+        <button class="tab-btn" data-tab="audio">Audio</button>
+        <button class="tab-btn" data-tab="admin">Admin</button>
+      </div>
+
+      <!-- Overview -->
+      <div class="tab-content active" id="overview-tab">
+        <div class="form-group">
+          <button class="btn" onclick="testHealth()">GET /health</button>
+          <button class="btn secondary" onclick="testModels()">GET /v1/models</button>
+        </div>
+        <div class="curl-box" id="overviewCurl">curl <span class="base-url"></span>/health</div>
+      </div>
+
+      <!-- Chat -->
+      <div class="tab-content" id="chat-tab">
+        <div class="form-group">
+          <label>Message</label>
+          <textarea id="chatMessage" placeholder="输入你想对模型说的话...">你好，请介绍一下自己。</textarea>
+        </div>
+        <div class="form-group checkbox-row">
+          <input type="checkbox" id="chatStream">
+          <label for="chatStream" style="margin:0">Stream 流式输出</label>
+        </div>
+        <button class="btn" onclick="testChat()">POST /v1/chat/completions</button>
+        <div class="curl-box" id="chatCurl">curl -X POST ...</div>
+      </div>
+
+      <!-- Audio -->
+      <div class="tab-content" id="audio-tab">
+        <p class="hint">方式 1：按住红色按钮录制（最长 30 秒）；方式 2：上传 .wav 文件。</p>
+        <div class="audio-controls">
+          <button id="recordBtn" class="record-btn" title="按住录音">🎙</button>
+          <span id="recordTime" class="record-time">00:00</span>
+          <button class="btn secondary" onclick="document.getElementById('wavFile').click()">Upload WAV</button>
+          <input type="file" id="wavFile" class="file-input" accept="audio/wav" onchange="onWavSelected(this)">
+        </div>
+        <div class="form-group">
+          <label>已选音频</label>
+          <input type="text" id="audioInfo" readonly placeholder="未选择音频">
+        </div>
+        <button class="btn" id="audioSendBtn" onclick="testAudio()" disabled>POST /v1/audio/transcriptions</button>
+        <div class="curl-box" id="audioCurl">curl -X POST -F "file=@audio.wav" ...</div>
+      </div>
+
+      <!-- Admin -->
+      <div class="tab-content" id="admin-tab">
+        <div class="form-group">
+          <label>max_tokens</label>
+          <input type="number" id="cfgMaxTokens" value="0" min="0">
+        </div>
+        <div class="form-group">
+          <label>max_model_size_mb</label>
+          <input type="number" id="cfgMaxModelSize" value="0" min="0">
+        </div>
+        <div class="form-group checkbox-row">
+          <input type="checkbox" id="cfgSkipClose">
+          <label for="cfgSkipClose" style="margin:0">skip_close</label>
+        </div>
+        <div class="form-group checkbox-row">
+          <input type="checkbox" id="cfgDebugLog">
+          <label for="cfgDebugLog" style="margin:0">debug_log</label>
+        </div>
+        <button class="btn" onclick="getConfig()">GET /admin/config</button>
+        <button class="btn secondary" onclick="setConfig()">POST /admin/config</button>
+        <div class="curl-box" id="adminCurl">curl <span class="base-url"></span>/admin/config</div>
+      </div>
+
+      <div class="response-panel">
+        <h3>
+          Response
+          <span class="response-meta" id="responseMeta"></span>
+        </h3>
+        <pre id="responseOutput">点击上方按钮发起请求，响应将显示在这里。</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const baseUrl = window.location.origin;
+    let recordedBlob = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let recordTimer = null;
+    let recordStartMs = 0;
+    let availableModels = [];
+    let activeModelName = '';
+
+    document.querySelectorAll('.base-url').forEach(el => el.textContent = baseUrl);
+
+    const endpoints = [
+      { method: 'GET', path: '/health', desc: '服务状态与模型加载状态', tab: 'overview' },
+      { method: 'GET', path: '/v1/models', desc: '列出所有可用模型', tab: 'overview' },
+      { method: 'POST', path: '/v1/models/{name}/activate', desc: '切换/激活指定模型', tab: 'overview' },
+      { method: 'POST', path: '/v1/chat/completions', desc: 'OpenAI 兼容对话补全', tab: 'chat' },
+      { method: 'POST', path: '/v1/audio/transcriptions', desc: 'SenseVoice 语音转文字', tab: 'audio' },
+      { method: 'GET', path: '/admin/config', desc: '查看运行时配置', tab: 'admin' },
+      { method: 'POST', path: '/admin/config', desc: '修改运行时配置', tab: 'admin' },
+    ];
+
+    const endpointGrid = document.getElementById('endpointGrid');
+    endpoints.forEach(ep => {
+      const div = document.createElement('div');
+      div.className = 'endpoint-card';
+      div.innerHTML = `<span class="method ${ep.method.toLowerCase()}">${ep.method}</span><span class="path">${ep.path}</span><div class="desc">${ep.desc}</div>`;
+      div.onclick = () => switchTab(ep.tab);
+      endpointGrid.appendChild(div);
+    });
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === tabId + '-tab'));
+    }
+
+    function showResponse(text, status, duration) {
+      const out = document.getElementById('responseOutput');
+      out.textContent = text;
+      out.className = status >= 400 ? 'error-text' : (status < 300 ? 'success-text' : '');
+      const meta = [];
+      if (status) meta.push('HTTP ' + status);
+      if (duration) meta.push(duration + 'ms');
+      document.getElementById('responseMeta').textContent = meta.join(' · ');
+    }
+
+    async function apiFetch(path, options = {}) {
+      const url = baseUrl + path;
+      const start = performance.now();
+      try {
+        const resp = await fetch(url, options);
+        const text = await resp.text();
+        const duration = Math.round(performance.now() - start);
+        let formatted = text;
+        try { formatted = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {}
+        showResponse(formatted, resp.status, duration);
+        return { ok: resp.ok, status: resp.status, text };
+      } catch (err) {
+        showResponse('Network error: ' + err.message, 0, 0);
+        return { ok: false, error: err };
+      }
+    }
+
+    function copyCurl(id) {
+      const el = document.getElementById(id);
+      navigator.clipboard.writeText(el.textContent).catch(() => {});
+    }
+
+    function makeCurlBox(id, text) {
+      const el = document.getElementById(id);
+      el.innerHTML = escapeHtml(text) + '<button class="copy-btn" onclick="copyCurl(\'' + id + '\')">Copy</button>';
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    async function refreshStatus() {
+      try {
+        const res = await fetch(baseUrl + '/health');
+        const data = await res.json();
+        const statusEl = document.getElementById('statusText');
+        if (data.status === 'ok') {
+          statusEl.className = 'status online';
+          statusEl.innerHTML = '<span class="status-dot"></span> Online';
+        } else if (data.status === 'loading') {
+          statusEl.className = 'status loading';
+          statusEl.innerHTML = '<span class="status-dot"></span> Loading model...';
+        } else {
+          statusEl.className = 'status offline';
+          statusEl.innerHTML = '<span class="status-dot"></span> Error';
+        }
+        document.getElementById('baseUrl').textContent = baseUrl;
+        activeModelName = data.model || '';
+        document.getElementById('activeModel').textContent = data.model || 'None';
+      } catch (e) {
+        document.getElementById('statusText').className = 'status offline';
+        document.getElementById('statusText').innerHTML = '<span class="status-dot"></span> Offline';
+      }
+    }
+
+    async function refreshModels() {
+      try {
+        const res = await fetch(baseUrl + '/v1/models');
+        const data = await res.json();
+        availableModels = (data.data || []).map(m => m.id);
+        const list = document.getElementById('modelList');
+        list.innerHTML = '';
+        availableModels.forEach(name => {
+          const active = name === activeModelName;
+          const li = document.createElement('li');
+          li.innerHTML = '<span>' + escapeHtml(name) + '</span>' + (active ? '<span class="badge">active</span>' : '<button class="btn secondary" onclick="activateModel(\'' + name + '\')">activate</button>');
+          list.appendChild(li);
+        });
+      } catch (e) {
+        document.getElementById('modelList').innerHTML = '<li>Failed to load models</li>';
+      }
+    }
+
+    async function testHealth() {
+      switchTab('overview');
+      makeCurlBox('overviewCurl', 'curl ' + baseUrl + '/health');
+      await apiFetch('/health');
+    }
+
+    async function testModels() {
+      switchTab('overview');
+      makeCurlBox('overviewCurl', 'curl ' + baseUrl + '/v1/models');
+      await apiFetch('/v1/models');
+    }
+
+    async function activateModel(name) {
+      switchTab('overview');
+      const path = '/v1/models/' + encodeURIComponent(name) + '/activate';
+      makeCurlBox('overviewCurl', 'curl -X POST ' + baseUrl + path);
+      await apiFetch(path, { method: 'POST' });
+      await refreshStatus();
+      await refreshModels();
+    }
+
+    async function testChat() {
+      switchTab('chat');
+      const msg = document.getElementById('chatMessage').value;
+      const stream = document.getElementById('chatStream').checked;
+      const body = { model: activeModelName || 'default', messages: [{ role: 'user', content: msg }], stream };
+      const bodyJson = JSON.stringify(body, null, 2);
+      makeCurlBox('chatCurl', 'curl -X POST ' + baseUrl + '/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d \'\'\'' + bodyJson + '\'\'\'');
+      showResponse(stream ? 'Streaming...' : 'Sending...', 0, 0);
+      if (stream) {
+        await testChatStream(body);
+      } else {
+        await apiFetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+      }
+    }
+
+    async function testChatStream(body) {
+      const start = performance.now();
+      try {
+        const resp = await fetch(baseUrl + '/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          let text = '';
+          lines.forEach(line => {
+            if (line.startsWith('data: ')) {
+              const payload = line.slice(6);
+              if (payload === '[DONE]') return;
+              try {
+                const obj = JSON.parse(payload);
+                const delta = obj.choices && obj.choices[0] && obj.choices[0].delta && obj.choices[0].delta.content;
+                if (delta) text += delta;
+              } catch (e) {}
+            }
+          });
+          if (text) showResponse(text, resp.status, Math.round(performance.now() - start));
+        }
+      } catch (err) {
+        showResponse('Stream error: ' + err.message, 0, 0);
+      }
+    }
+
+    function onWavSelected(input) {
+      const file = input.files[0];
+      if (!file) return;
+      recordedBlob = file;
+      document.getElementById('audioInfo').value = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+      document.getElementById('audioSendBtn').disabled = false;
+      makeCurlBox('audioCurl', 'curl -X POST -F "file=@' + file.name + '" ' + baseUrl + '/v1/audio/transcriptions');
+    }
+
+    function buildWavHeader(sampleCount) {
+      const buffer = new ArrayBuffer(44);
+      const view = new DataView(buffer);
+      const writeString = (offset, s) => { for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i)); };
+      const dataSize = sampleCount * 2;
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, 16000, true);
+      view.setUint32(28, 32000, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(36, 'data');
+      view.setUint32(40, dataSize, true);
+      return buffer;
+    }
+
+    async function testAudio() {
+      switchTab('audio');
+      if (!recordedBlob) {
+        showResponse('请先录音或上传 WAV 文件', 0, 0);
+        return;
+      }
+      showResponse('Transcribing...', 0, 0);
+      const form = new FormData();
+      form.append('file', recordedBlob, 'audio.wav');
+      await apiFetch('/v1/audio/transcriptions', { method: 'POST', body: form });
+    }
+
+    // Recording with Web Audio API to WAV
+    const recordBtn = document.getElementById('recordBtn');
+    recordBtn.addEventListener('mousedown', startRecord);
+    recordBtn.addEventListener('touchstart', startRecord);
+    recordBtn.addEventListener('mouseup', stopRecord);
+    recordBtn.addEventListener('touchend', stopRecord);
+    recordBtn.addEventListener('mouseleave', stopRecord);
+
+    async function startRecord(e) {
+      e.preventDefault();
+      if (mediaRecorder) return;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
+        const ctx = new AudioContext({ sampleRate: 16000 });
+        const source = ctx.createMediaStreamSource(stream);
+        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        const chunks = [];
+        source.connect(processor);
+        processor.connect(ctx.destination);
+        processor.onaudioprocess = ev => {
+          const data = ev.inputBuffer.getChannelData(0);
+          const pcm = new Int16Array(data.length);
+          for (let i = 0; i < data.length; i++) {
+            let s = Math.max(-1, Math.min(1, data[i]));
+            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          chunks.push(pcm);
+        };
+        mediaRecorder = { stream, ctx, processor, source, chunks };
+        recordBtn.classList.add('recording');
+        recordStartMs = Date.now();
+        audioChunks = chunks;
+        recordTimer = setInterval(() => {
+          const s = Math.floor((Date.now() - recordStartMs) / 1000);
+          document.getElementById('recordTime').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+        }, 500);
+      } catch (err) {
+        showResponse('无法录音: ' + err.message, 0, 0);
+      }
+    }
+
+    function stopRecord(e) {
+      if (!mediaRecorder) return;
+      e.preventDefault();
+      clearInterval(recordTimer);
+      recordBtn.classList.remove('recording');
+      const { stream, ctx, processor, source, chunks } = mediaRecorder;
+      processor.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach(t => t.stop());
+      ctx.close();
+      mediaRecorder = null;
+
+      let total = 0;
+      chunks.forEach(c => total += c.length);
+      const all = new Int16Array(total);
+      let offset = 0;
+      chunks.forEach(c => { all.set(c, offset); offset += c.length; });
+      const header = buildWavHeader(total);
+      const wav = new Uint8Array(header.byteLength + all.byteLength);
+      wav.set(new Uint8Array(header), 0);
+      wav.set(new Uint8Array(all.buffer), header.byteLength);
+      recordedBlob = new Blob([wav], { type: 'audio/wav' });
+      const sizeKb = (wav.length / 1024).toFixed(1);
+      const duration = (total / 16000).toFixed(1);
+      document.getElementById('audioInfo').value = 'Recorded ' + duration + 's (' + sizeKb + ' KB)';
+      document.getElementById('audioSendBtn').disabled = false;
+      makeCurlBox('audioCurl', 'curl -X POST -F "file=@audio.wav" ' + baseUrl + '/v1/audio/transcriptions');
+      document.getElementById('recordTime').textContent = '00:00';
+    }
+
+    async function getConfig() {
+      switchTab('admin');
+      makeCurlBox('adminCurl', 'curl ' + baseUrl + '/admin/config');
+      const r = await apiFetch('/admin/config');
+      if (r.ok) {
+        try {
+          const cfg = JSON.parse(r.text);
+          document.getElementById('cfgMaxTokens').value = cfg.max_tokens || 0;
+          document.getElementById('cfgMaxModelSize').value = cfg.max_model_size_mb || 0;
+          document.getElementById('cfgSkipClose').checked = !!cfg.skip_close;
+          document.getElementById('cfgDebugLog').checked = !!cfg.debug_log;
+        } catch (e) {}
+      }
+    }
+
+    async function setConfig() {
+      switchTab('admin');
+      const body = {
+        max_tokens: parseInt(document.getElementById('cfgMaxTokens').value) || 0,
+        max_model_size_mb: parseInt(document.getElementById('cfgMaxModelSize').value) || 0,
+        skip_close: document.getElementById('cfgSkipClose').checked,
+        debug_log: document.getElementById('cfgDebugLog').checked,
+      };
+      const bodyJson = JSON.stringify(body);
+      makeCurlBox('adminCurl', 'curl -X POST ' + baseUrl + '/admin/config \\\n  -H "Content-Type: application/json" \\\n  -d \'\'' + bodyJson + '\'\'\'');
+      await apiFetch('/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: bodyJson
+      });
+    }
+
+    window.activateModel = activateModel;
+    window.testHealth = testHealth;
+    window.testModels = testModels;
+    window.testChat = testChat;
+    window.testAudio = testAudio;
+    window.getConfig = getConfig;
+    window.setConfig = setConfig;
+    window.onWavSelected = onWavSelected;
+    window.copyCurl = copyCurl;
+
+    refreshStatus();
+    refreshModels();
+    setInterval(() => { refreshStatus(); refreshModels(); }, 10000);
+  </script>
+</body>
+</html>

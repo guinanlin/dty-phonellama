@@ -48,12 +48,15 @@ class EdgeServer(
   hostname: String = DEFAULT_HOST,
   port: Int = DEFAULT_PORT,
   private val timeoutSeconds: Long = DEFAULT_TIMEOUT_SECONDS,
+  private val uiHtml: String = DEFAULT_UI_HTML,
 ) : NanoHTTPD(hostname, port) {
 
   companion object {
     const val DEFAULT_HOST = "127.0.0.1"
     const val DEFAULT_PORT = 8888
     const val DEFAULT_TIMEOUT_SECONDS = 180L  // 3 min — allows large/reasoning models to respond
+    // Fallback mini-UI used when the assets HTML is not available.
+    const val DEFAULT_UI_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><title>PhoneLlama</title></head><body><h1>PhoneLlama</h1><p>UI asset not found. Please open the app.</p></body></html>"""
     private const val MIME_JSON = "application/json"
     private const val MIME_HTML = "text/html"
     // Hard prompt character budget to prevent native KV-cache buffer-overflow crashes in LiteRT.
@@ -199,81 +202,7 @@ class EdgeServer(
   }
 
   private fun handleWebUi(): Response {
-    val loaded = activeModel?.instance != null
-    val model = if (loaded) activeModelDisplayName else "None"
-    val statusColor = if (loaded) "#4caf50" else "#f44336"
-    val statusText = if (loaded) "● Online" else "● Offline"
-    val models = knownModelNames.filter { it !in BROKEN_MODEL_NAMES }.joinToString("") { name ->
-      val active = name == activeModelDisplayName && loaded
-      val badge = if (active) """ <span style="background:#4caf50;color:#fff;border-radius:4px;padding:2px 7px;font-size:12px;margin-left:8px">active</span>""" else ""
-      "<li style='padding:6px 0;border-bottom:1px solid #2a2a3a'>$name$badge</li>"
-    }
-    val host = hostname ?: "localhost"
-    val baseUrl = "http://$host:$DEFAULT_PORT"
-    val html = """<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PhoneLlama</title>
-  <style>
-    body { font-family: system-ui, sans-serif; background: #13131f; color: #e0e0f0; margin: 0; padding: 0; }
-    .container { max-width: 520px; margin: 0 auto; padding: 24px 16px; }
-    h1 { font-size: 26px; margin-bottom: 4px; letter-spacing: -0.5px; }
-    .subtitle { color: #888; font-size: 14px; margin-bottom: 24px; }
-    .card { background: #1e1e2e; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }
-    .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin: 0 0 10px; }
-    .status { font-size: 18px; font-weight: 600; color: $statusColor; }
-    .model-name { font-size: 20px; font-weight: 600; }
-    ul { list-style: none; padding: 0; margin: 0; }
-    .btn { display: inline-block; background: #6c63ff; color: #fff; border: none; border-radius: 8px;
-           padding: 12px 24px; font-size: 16px; font-weight: 600; cursor: pointer; text-decoration: none;
-           margin-top: 4px; width: 100%; box-sizing: border-box; text-align: center; }
-    .btn:hover { background: #5a52e0; }
-    code { background: #111122; border-radius: 6px; padding: 10px 12px; display: block;
-           font-size: 12px; color: #a0d0ff; white-space: pre-wrap; word-break: break-all; margin-top: 6px; }
-    .endpoint { color: #888; font-size: 12px; margin-top: 6px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>🦙 PhoneLlama</h1>
-    <p class="subtitle">On-device AI inference host</p>
-
-    <div class="card">
-      <h2>Server Status</h2>
-      <div class="status">$statusText</div>
-      <div class="endpoint">$baseUrl</div>
-    </div>
-
-    <div class="card">
-      <h2>Active Model</h2>
-      <div class="model-name">$model</div>
-    </div>
-
-    <div class="card">
-      <h2>Available Models</h2>
-      <ul>$models</ul>
-    </div>
-
-    <div class="card">
-      <h2>Open App</h2>
-      <a class="btn" href="phonellama://open">Open PhoneLlama App</a>
-    </div>
-
-    <div class="card">
-      <h2>Quick Test</h2>
-      <code>curl $baseUrl/health</code>
-      <code>curl $baseUrl/v1/models</code>
-    </div>
-  </div>
-  <script>
-    // Auto-refresh status every 10s
-    setTimeout(() => location.reload(), 10000);
-  </script>
-</body>
-</html>"""
-    return newFixedLengthResponse(Response.Status.OK, MIME_HTML, html).applyCors()
+    return newFixedLengthResponse(Response.Status.OK, MIME_HTML, uiHtml).applyCors()
   }
 
   private fun handleGetConfig(): Response =
