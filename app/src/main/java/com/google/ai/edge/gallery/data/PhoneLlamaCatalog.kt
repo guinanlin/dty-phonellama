@@ -53,7 +53,7 @@ object PhoneLlamaCatalog {
       bestForTaskTypes = listOf(BuiltInTaskId.LLM_ASK_AUDIO),
       llmSupportAudio = true,
       runtimeType = RuntimeType.LLAMA_CPP_ASR,
-      url = "https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF/resolve/main/" +
+      url = "https://hf-mirror.com/FunAudioLLM/SenseVoiceSmall-GGUF/resolve/main/" +
         "sensevoice-small-q8.gguf?download=true",
     ),
 
