@@ -145,9 +145,12 @@ and audio-event labels:
 {"text":"你好，这是 PhoneLlama。","language":"zh","events":[]}
 ```
 
-SenseVoice is downloaded from the Audio Scribe model list and runs locally on
-the phone with the bundled FSMN-VAD model. The first request loads the 254 MB
-q8 model and may take longer than subsequent requests.
+SenseVoice is downloaded from the Audio Scribe model list and runs locally via
+**sherpa-onnx** (ONNX Runtime). Silero VAD is bundled in the APK. Acceleration
+is **CPU** by default; **QNN** is used automatically on Qualcomm devices when a
+QNN SenseVoice model pack is present. The previous GGUF/llama.cpp SenseVoice
+path is removed — delete any old SenseVoice download and fetch the new ONNX
+package (~237 MB + tokens).
 
 ### `POST /activate`
 

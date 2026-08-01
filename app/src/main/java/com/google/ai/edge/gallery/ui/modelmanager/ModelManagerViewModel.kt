@@ -56,8 +56,9 @@ import com.google.ai.edge.gallery.data.PhoneLlamaCatalog
 import com.google.ai.edge.gallery.data.createLlmChatConfigs
 import com.google.ai.edge.gallery.edgeserver.EdgeServer
 import com.google.ai.edge.gallery.edgeserver.EdgeServerManager
+import com.google.ai.edge.gallery.data.isAsrRuntime
 import com.google.ai.edge.gallery.runtime.asr.AsrEngine
-import com.google.ai.edge.gallery.runtime.asr.SenseVoiceEngine
+import com.google.ai.edge.gallery.runtime.asr.SenseVoiceSherpaEngine
 import com.google.ai.edge.gallery.proto.AccessTokenData
 import com.google.ai.edge.gallery.proto.ImportedModel
 import com.google.ai.edge.gallery.proto.Theme
@@ -555,7 +556,7 @@ constructor(
             model = model,
             status = ModelInitializationStatusType.INITIALIZED,
           )
-          if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR) {
+          if (model.runtimeType.isAsrRuntime()) {
             val engine = model.instance as? AsrEngine
             if (engine != null) {
               EdgeServerManager.bindAsrEngine(model, engine, model.displayName)
@@ -583,9 +584,9 @@ constructor(
 
       // Call the model initialization function.
       val systemPrompt = SystemPromptHelper.getEffectiveSystemPrompt(systemPromptRepository, task)
-      if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR) {
+      if (model.runtimeType.isAsrRuntime()) {
         try {
-          model.instance = SenseVoiceEngine(context = context, model = model)
+          model.instance = SenseVoiceSherpaEngine(context = context, model = model)
           onDoneFn("")
         } catch (e: Throwable) {
           model.instance = null
@@ -618,7 +619,7 @@ constructor(
       return
     }
 
-    if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR && model.instance != null) {
+    if (model.runtimeType.isAsrRuntime() && model.instance != null) {
       try {
         (model.instance as? AsrEngine)?.close()
       } catch (e: Throwable) {

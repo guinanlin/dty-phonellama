@@ -28,17 +28,19 @@ object PhoneLlamaCatalog {
   val EXTENDED_MODELS: List<AllowedModel> = listOf(
 
     // -----------------------------------------------------------------------
-    // SenseVoiceSmall q8  (FunAudioLLM)
-    // Native ggml/llama.cpp ASR runtime. The VAD model is bundled in assets.
+    // SenseVoice (sherpa-onnx ONNX, CPU; QNN when a QNN pack is present)
+    // Silero VAD is bundled in APK assets. Delete any old GGUF SenseVoice first.
     // -----------------------------------------------------------------------
     AllowedModel(
       name = "SenseVoice-Small",
-      modelId = "FunAudioLLM/SenseVoiceSmall-GGUF",
-      modelFile = "sensevoice-small-q8.gguf",
+      modelId = "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
+      modelFile = "model.int8.onnx",
       commitHash = "main",
-      description = "SenseVoiceSmall q8 local speech recognition for Chinese, English, " +
-        "Japanese, Korean, Cantonese, emotion and audio-event tags (~254 MB).",
-      sizeInBytes = 254_000_000L,
+      description = "SenseVoice int8 via sherpa-onnx for Chinese, English, Japanese, " +
+        "Korean, Cantonese, with language/emotion/event labels (~237 MB ONNX + tokens). " +
+        "Runs on CPU; QNN used automatically when a Qualcomm QNN model pack is installed. " +
+        "Replaces the previous GGUF/llama.cpp path — re-download required.",
+      sizeInBytes = 237_115_547L,
       minDeviceMemoryInGb = 4,
       defaultConfig = DefaultConfig(
         topK = 1,
@@ -52,9 +54,20 @@ object PhoneLlamaCatalog {
       taskTypes = listOf(BuiltInTaskId.LLM_ASK_AUDIO),
       bestForTaskTypes = listOf(BuiltInTaskId.LLM_ASK_AUDIO),
       llmSupportAudio = true,
-      runtimeType = RuntimeType.LLAMA_CPP_ASR,
-      url = "https://hf-mirror.com/FunAudioLLM/SenseVoiceSmall-GGUF/resolve/main/" +
-        "sensevoice-small-q8.gguf?download=true",
+      runtimeType = RuntimeType.SHERPA_ONNX_ASR,
+      url = "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/" +
+        "resolve/main/model.int8.onnx?download=true",
+      extraDataFiles =
+        listOf(
+          ModelDataFile(
+            name = "tokens",
+            url =
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/" +
+                "resolve/main/tokens.txt?download=true",
+            downloadFileName = "tokens.txt",
+            sizeInBytes = 315_894L,
+          ),
+        ),
     ),
 
     // -----------------------------------------------------------------------

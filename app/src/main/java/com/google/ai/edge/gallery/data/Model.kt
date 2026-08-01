@@ -41,8 +41,14 @@ enum class RuntimeType {
   @SerializedName("unknown") UNKNOWN,
   @SerializedName("litert_lm") LITERT_LM,
   @SerializedName("aicore") AICORE,
+  /** @deprecated Replaced by [SHERPA_ONNX_ASR]. Kept for serialized catalog compatibility. */
   @SerializedName("llama_cpp_asr") LLAMA_CPP_ASR,
+  @SerializedName("sherpa_onnx_asr") SHERPA_ONNX_ASR,
 }
+
+/** True for local ASR runtimes used by Audio Scribe / EdgeServer transcriptions. */
+fun RuntimeType.isAsrRuntime(): Boolean =
+  this == RuntimeType.SHERPA_ONNX_ASR || this == RuntimeType.LLAMA_CPP_ASR
 
 enum class AICoreModelReleaseStage {
   @SerializedName("stable") STABLE,

@@ -23,9 +23,9 @@ import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.common.SystemPromptHelper
 import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.data.Model
-import com.google.ai.edge.gallery.data.RuntimeType
+import com.google.ai.edge.gallery.data.isAsrRuntime
 import com.google.ai.edge.gallery.runtime.asr.AsrEngine
-import com.google.ai.edge.gallery.runtime.asr.SenseVoiceEngine
+import com.google.ai.edge.gallery.runtime.asr.SenseVoiceSherpaEngine
 import com.google.ai.edge.gallery.data.SystemPromptRepository
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.runtime.runtimeHelper
@@ -147,11 +147,11 @@ open class LlmChatViewModelBase(
         audioClips.add(audioMessage.genByteArrayForWav())
       }
 
-      if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR) {
+      if (model.runtimeType.isAsrRuntime()) {
         try {
           val engine = model.instance as? AsrEngine
             ?: throw IllegalStateException("SenseVoice ASR engine is not initialized")
-          val activeAccelerator = (engine as? SenseVoiceEngine)?.activeAccelerator ?: "CPU"
+          val activeAccelerator = (engine as? SenseVoiceSherpaEngine)?.activeAccelerator ?: "CPU"
           val start = System.currentTimeMillis()
           val results = audioClips.map { engine.transcribe(it) }
           val text = results.joinToString("\n") { result ->
@@ -353,7 +353,7 @@ open class LlmChatViewModelBase(
       removeLastMessage(model = model)
     }
     setInProgress(false)
-    if (model.runtimeType != RuntimeType.LLAMA_CPP_ASR) {
+    if (!model.runtimeType.isAsrRuntime()) {
       model.runtimeHelper.stopResponse(model)
     }
     Log.d(TAG, "Done stopping response")
@@ -374,7 +374,7 @@ open class LlmChatViewModelBase(
       clearAllMessages(model = model)
       stopResponse(model = model)
 
-      if (model.runtimeType == RuntimeType.LLAMA_CPP_ASR) {
+      if (model.runtimeType.isAsrRuntime()) {
         setIsResettingSession(false)
         onDone()
         return@launch

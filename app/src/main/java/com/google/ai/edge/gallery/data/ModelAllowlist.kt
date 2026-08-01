@@ -70,6 +70,8 @@ data class AllowedModel(
   val capabilityToTaskTypes: Map<ModelCapability, List<String>>? = null,
   val updatableModelFiles: List<ModelFile>? = null,
   val updateInfo: String? = null,
+  /** Additional files downloaded alongside [modelFile] (e.g. tokens.txt). */
+  val extraDataFiles: List<ModelDataFile>? = null,
 ) {
   fun toModel(): Model {
     // Construct HF download url.
@@ -229,6 +231,7 @@ data class AllowedModel(
       updatableModelFiles = updatableModelFiles ?: listOf(),
       updateInfo = updateInfo ?: "",
       latestModelFile = ModelFile(fileName = downloadedFileName, commitHash = version),
+      extraDataFiles = extraDataFiles ?: listOf(),
     )
   }
 

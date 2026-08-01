@@ -130,6 +130,7 @@ import com.google.ai.edge.gallery.data.MAX_IMAGE_COUNT_AI_CORE
 import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.SAMPLE_RATE
 import com.google.ai.edge.gallery.data.Task
+import com.google.ai.edge.gallery.data.isAsrRuntime
 import com.google.ai.edge.gallery.ui.common.getTaskIconColor
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.bodyLargeNarrow
@@ -285,7 +286,7 @@ fun MessageInputText(
               context = context,
               uri = uri,
               maxSeconds = if (
-                modelManagerUiState.selectedModel.runtimeType == RuntimeType.LLAMA_CPP_ASR
+                modelManagerUiState.selectedModel.runtimeType.isAsrRuntime()
               ) 300 else 30,
               onAudioSelected = { audioClip ->
                 updatePickedAudioClips(
@@ -672,7 +673,7 @@ fun MessageInputText(
             AudioRecorderPanel(
               task = task,
               maxDurationSec = if (
-                modelManagerUiState.selectedModel.runtimeType == RuntimeType.LLAMA_CPP_ASR
+                modelManagerUiState.selectedModel.runtimeType.isAsrRuntime()
               ) 300 else 30,
               onSendAudioClip = { audioData ->
                 scope.launch {

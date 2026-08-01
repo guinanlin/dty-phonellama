@@ -14,7 +14,7 @@ jobs:
   build:
     name: Build APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -35,13 +35,11 @@ jobs:
             platform-tools
             platforms;android-35
             build-tools;35.0.0
-            ndk;27.2.12479018
-            cmake;3.22.1
 
-      - name: Install Vulkan shader build tools
+      - name: Fetch sherpa-onnx AAR
         run: |
-          sudo apt-get update
-          sudo apt-get install -y glslc spirv-headers libvulkan-dev
+          chmod +x scripts/fetch-sherpa-onnx.sh
+          ./scripts/fetch-sherpa-onnx.sh
 
       - name: Make gradlew executable
         run: chmod +x gradlew
@@ -91,24 +89,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-${{ github.sha }}
-          path: |
-            build-logs/
-            app/.cxx/**/*.log
+          path: build-logs/
           if-no-files-found: warn
           retention-days: 7
-
-      - name: Print CMake failure details
-        if: failure()
-        run: |
-          echo "===== GRADLE LOG TAIL ====="
-          tail -n 300 build-logs/gradle.log || true
-          echo "===== CMAKE ERROR FILES ====="
-          find app/.cxx -name "*.log" -type f -print0 2>/dev/null | while IFS= read -r -d '' f; do
-            echo "--- $f ---"
-            tail -n 100 "$f" || true
-          done
-          echo "===== CMAKE CONFIGURATION ERROR ====="
-          grep -n -E "CMake Error|error:|Could NOT|No such|FATAL" build-logs/gradle.log | tail -n 50 || true
 
       - name: Prepare release asset
         if: startsWith(github.ref, 'refs/tags/v')

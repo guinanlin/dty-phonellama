@@ -31,7 +31,6 @@ plugins {
 android {
   namespace = "com.google.ai.edge.gallery"
   compileSdk = 35
-  ndkVersion = "27.2.12479018"
 
   defaultConfig {
     applicationId = "com.phonellama.app"
@@ -39,8 +38,8 @@ android {
     targetSdk = 35
     versionCode = providers.environmentVariable("VERSION_CODE")
         .map { it.toInt() }
-        .getOrElse(10024)
-    versionName = providers.environmentVariable("VERSION_NAME").getOrElse("1.0.24")
+        .getOrElse(10025)
+    versionName = providers.environmentVariable("VERSION_NAME").getOrElse("1.0.25")
 
     // Needed for HuggingFace auth workflows.
     // Use the scheme of the "Redirect URLs" in HuggingFace app.
@@ -51,6 +50,7 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     ndk {
+      // sherpa-onnx AAR ships multiple ABIs; keep only arm64 for APK size.
       abiFilters += "arm64-v8a"
     }
   }
@@ -75,12 +75,6 @@ android {
       signingConfig = signingConfigs.getByName("phonellamaRelease")
     }
   }
-  externalNativeBuild {
-    cmake {
-      path = file("src/main/cpp/CMakeLists.txt")
-      version = "3.22.1"
-    }
-  }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
@@ -100,6 +94,8 @@ kotlin {
 }
 
 dependencies {
+  // Vendored sherpa-onnx Android AAR (downloaded by CI / scripts/fetch-sherpa-onnx.sh).
+  implementation(files("libs/sherpa-onnx-1.13.4.aar"))
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.activity.compose)
