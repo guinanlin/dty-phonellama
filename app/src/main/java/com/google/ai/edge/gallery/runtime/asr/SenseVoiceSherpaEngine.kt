@@ -18,9 +18,6 @@ import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 import com.k2fsa.sherpa.onnx.QnnConfig
-import com.k2fsa.sherpa.onnx.SileroVadModelConfig
-import com.k2fsa.sherpa.onnx.Vad
-import com.k2fsa.sherpa.onnx.VadModelConfig
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -28,8 +25,12 @@ import java.nio.ByteOrder
 /**
  * SenseVoice ASR via sherpa-onnx.
  *
- * Prefers Qualcomm QNN when the QNN model pack and HTP runtime libs are
- * available; otherwise falls back to CPU ONNX.
+ * Prefers Qualcomm QNN when the QNN pack, HTP runtime, and context binary
+ * (`model.bin`) are available; otherwise falls back to CPU ONNX.
+ *
+ * Note: Silero VAD is intentionally not used. Mixed sherpa AAR/native builds
+ * caused native SIGSEGV inside `Vad.acceptWaveform` / `segmentWithVad` on
+ * device. Long audio is split by fixed duration instead (QNN max 30s).
  */
 class SenseVoiceSherpaEngine(
   context: Context,
@@ -42,8 +43,7 @@ class SenseVoiceSherpaEngine(
   var activeAccelerator: String
     private set
   private val recognizer: OfflineRecognizer
-  private val vad: Vad
-  private val vadWindowSize: Int = 512
+  private val maxSegmentSamples: Int
 
   init {
     val requested =
@@ -55,26 +55,12 @@ class SenseVoiceSherpaEngine(
         requestedAccelerator = requested,
       )
     activeAccelerator = providerChoice.label
-
-    val vadPath = copyVadAsset(appContext)
-    vad =
-      Vad(
-        config =
-          VadModelConfig(
-            sileroVadModelConfig =
-              SileroVadModelConfig(
-                model = vadPath,
-                threshold = 0.5f,
-                minSilenceDuration = 0.5f,
-                minSpeechDuration = 0.25f,
-                windowSize = vadWindowSize,
-                maxSpeechDuration = 30f,
-              ),
-            sampleRate = SAMPLE_RATE,
-            numThreads = 1,
-            provider = "cpu",
-          ),
-      )
+    maxSegmentSamples =
+      if (providerChoice.provider == "qnn") {
+        (SAMPLE_RATE * QNN_MAX_SEGMENT_SECONDS).toInt()
+      } else {
+        (SAMPLE_RATE * CPU_MAX_SEGMENT_SECONDS).toInt()
+      }
 
     var chosen = providerChoice
     recognizer =
@@ -103,11 +89,7 @@ class SenseVoiceSherpaEngine(
         return AsrResult(text = "")
       }
 
-      val segments = segmentWithVad(samples)
-      if (segments.isEmpty()) {
-        return decodeSegment(samples)
-      }
-
+      val segments = splitByDuration(samples, maxSegmentSamples)
       val texts = mutableListOf<String>()
       var language: String? = null
       var emotion: String? = null
@@ -134,10 +116,6 @@ class SenseVoiceSherpaEngine(
         recognizer.release()
       } catch (_: Throwable) {
       }
-      try {
-        vad.release()
-      } catch (_: Throwable) {
-      }
     }
   }
 
@@ -158,41 +136,11 @@ class SenseVoiceSherpaEngine(
     }
   }
 
-  private fun segmentWithVad(samples: FloatArray): List<FloatArray> {
-    vad.reset()
-    val segments = mutableListOf<FloatArray>()
-    var offset = 0
-    while (offset + vadWindowSize <= samples.size) {
-      val window = samples.copyOfRange(offset, offset + vadWindowSize)
-      vad.acceptWaveform(window)
-      while (!vad.empty()) {
-        segments.add(vad.front().samples)
-        vad.pop()
-      }
-      offset += vadWindowSize
-    }
-    vad.flush()
-    while (!vad.empty()) {
-      segments.add(vad.front().samples)
-      vad.pop()
-    }
-    return segments
-  }
-
-  private fun copyVadAsset(context: Context): String {
-    val vadFile = File(context.filesDir, VAD_FILE_NAME)
-    if (!vadFile.exists() || vadFile.length() == 0L) {
-      context.assets.open(VAD_FILE_NAME).use { input ->
-        vadFile.outputStream().use { output -> input.copyTo(output) }
-      }
-    }
-    return vadFile.absolutePath
-  }
-
   companion object {
     private const val TAG = "SenseVoiceSherpa"
     private const val SAMPLE_RATE = 16000
-    private const val VAD_FILE_NAME = "silero_vad.onnx"
+    private const val QNN_MAX_SEGMENT_SECONDS = 30
+    private const val CPU_MAX_SEGMENT_SECONDS = 60
 
     fun decodeWavToFloatSamples(bytes: ByteArray): FloatArray {
       if (bytes.size < 44) {
@@ -226,6 +174,20 @@ class SenseVoiceSherpaEngine(
       }
       return out
     }
+
+    /** Split audio into fixed-length chunks; last chunk may be shorter. */
+    fun splitByDuration(samples: FloatArray, maxSamples: Int): List<FloatArray> {
+      if (samples.isEmpty()) return emptyList()
+      if (maxSamples <= 0 || samples.size <= maxSamples) return listOf(samples)
+      val out = ArrayList<FloatArray>((samples.size + maxSamples - 1) / maxSamples)
+      var offset = 0
+      while (offset < samples.size) {
+        val end = (offset + maxSamples).coerceAtMost(samples.size)
+        out.add(samples.copyOfRange(offset, end))
+        offset = end
+      }
+      return out
+    }
   }
 }
 
@@ -251,11 +213,9 @@ object SherpaSenseVoiceFactory {
       buildList {
         if (model.unzipDir.isNotEmpty()) add(File(base, model.unzipDir))
         add(base)
-        // Flattened archive may also leave a single nested folder.
         base.listFiles()?.filter { it.isDirectory }?.forEach { add(it) }
       }
         .distinct()
-    // Prefer a directory that has tokens.txt (required by sherpa). Prefer QNN pack when present.
     val withTokens = candidates.filter { File(it, TOKENS).exists() }
     withTokens.firstOrNull { File(it, QNN_LIB).exists() }?.let {
       return it
@@ -284,13 +244,17 @@ object SherpaSenseVoiceFactory {
     val hasRuntime =
       File(nativeDir, QNN_BACKEND).exists() && File(nativeDir, QNN_SYSTEM).exists()
     val hasQnnPack = File(modelDir, QNN_LIB).exists() && File(modelDir, TOKENS).exists()
-    return if (wantsQnn && isQualcomm && hasQnnPack && hasRuntime) {
+    // First-run generation of model.bin from libmodel.so is known to hard-crash on
+    // some devices; only enable QNN when a ready context binary is already present.
+    val hasContextBinary = File(modelDir, QNN_BIN).isFile && File(modelDir, QNN_BIN).length() > 0
+    return if (wantsQnn && isQualcomm && hasQnnPack && hasRuntime && hasContextBinary) {
       ProviderChoice(provider = "qnn", label = "QNN")
     } else {
       if (wantsQnn) {
         Log.i(
           TAG,
-          "QNN not available (qualcomm=$isQualcomm pack=$hasQnnPack runtime=$hasRuntime); using CPU",
+          "QNN not available (qualcomm=$isQualcomm pack=$hasQnnPack runtime=$hasRuntime " +
+            "model.bin=$hasContextBinary); using CPU",
         )
       }
       ProviderChoice(provider = "cpu", label = "CPU")
@@ -330,20 +294,18 @@ object SherpaSenseVoiceFactory {
         }
         else -> {
           val onnx = File(modelDir, MODEL_ONNX)
-          val parentOnnx = File(modelDir.parentFile, MODEL_ONNX)
+          val parentOnnx = modelDir.parentFile?.let { File(it, MODEL_ONNX) }
           val fallback =
             sequenceOf(modelDir, modelDir.parentFile)
               .filterNotNull()
-              .flatMap { dir ->
-                dir.listFiles()?.asSequence() ?: emptySequence()
-              }
+              .flatMap { dir -> dir.listFiles()?.asSequence() ?: emptySequence() }
               .firstOrNull {
                 it.isFile && it.name.endsWith(".onnx") && !it.name.contains("vad")
               }
           val modelFile =
             when {
               onnx.exists() -> onnx
-              parentOnnx.exists() -> parentOnnx
+              parentOnnx != null && parentOnnx.exists() -> parentOnnx
               else -> fallback
             }
           require(modelFile != null && modelFile.exists()) {
