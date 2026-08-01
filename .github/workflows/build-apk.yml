@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     name: Build APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:
@@ -79,11 +79,23 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.PHONELLAMA_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.PHONELLAMA_KEY_PASSWORD }}
         run: |
+          mkdir -p build-logs
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            ./gradlew assembleRelease --stacktrace --no-daemon
+            ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee build-logs/gradle.log
           else
-            ./gradlew assembleDebug --stacktrace --no-daemon
+            ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-logs/gradle.log
           fi
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ github.sha }}
+          path: |
+            build-logs/
+            app/.cxx/**/*.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Prepare release asset
         if: startsWith(github.ref, 'refs/tags/v')
