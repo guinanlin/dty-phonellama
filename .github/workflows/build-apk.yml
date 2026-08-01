@@ -97,6 +97,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Print CMake failure details
+        if: failure()
+        run: |
+          echo "===== GRADLE LOG TAIL ====="
+          tail -n 300 build-logs/gradle.log || true
+          echo "===== CMAKE ERROR FILES ====="
+          find app/.cxx -name "*.log" -type f -print0 2>/dev/null | while IFS= read -r -d '' f; do
+            echo "--- $f ---"
+            tail -n 100 "$f" || true
+          done
+          echo "===== CMAKE CONFIGURATION ERROR ====="
+          grep -n -E "CMake Error|error:|Could NOT|No such|FATAL" build-logs/gradle.log | tail -n 50 || true
+
       - name: Prepare release asset
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
