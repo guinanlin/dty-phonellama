@@ -16,6 +16,14 @@ if(ANDROID)
     set(Vulkan_LIBRARY
         "${ANDROID_VULKAN_SYSROOT}/usr/lib/aarch64-linux-android/${CMAKE_SYSTEM_VERSION}/libvulkan.so"
         CACHE FILEPATH "" FORCE)
+
+    # Ubuntu's spirv-headers package contains the headers but does not ship
+    # SPIRV-HeadersConfig.cmake, which llama.cpp's Vulkan CMake requires.
+    set(SPIRV_HEADERS_DIR "${CMAKE_CURRENT_BINARY_DIR}/spirv-headers-cmake")
+    file(MAKE_DIRECTORY "${SPIRV_HEADERS_DIR}")
+    file(WRITE "${SPIRV_HEADERS_DIR}/SPIRV-HeadersConfig.cmake"
+        "set(SPIRV-Headers_FOUND TRUE)\n")
+    set(SPIRV-Headers_DIR "${SPIRV_HEADERS_DIR}" CACHE PATH "" FORCE)
 endif()
 
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
