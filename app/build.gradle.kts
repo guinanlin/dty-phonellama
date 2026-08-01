@@ -38,8 +38,8 @@ android {
     targetSdk = 35
     versionCode = providers.environmentVariable("VERSION_CODE")
         .map { it.toInt() }
-        .getOrElse(10025)
-    versionName = providers.environmentVariable("VERSION_NAME").getOrElse("1.0.25")
+        .getOrElse(10026)
+    versionName = providers.environmentVariable("VERSION_NAME").getOrElse("1.0.26")
 
     // Needed for HuggingFace auth workflows.
     // Use the scheme of the "Redirect URLs" in HuggingFace app.
@@ -87,6 +87,12 @@ android {
     compose = true
     buildConfig = true
   }
+  packaging {
+    jniLibs {
+      // Prefer app/src/main/jniLibs (QNN-enabled sherpa natives) over AAR copies.
+      pickFirsts += listOf("**/lib*.so")
+    }
+  }
 }
 
 kotlin {
@@ -96,6 +102,7 @@ kotlin {
 dependencies {
   // Vendored sherpa-onnx Android AAR (downloaded by CI / scripts/fetch-sherpa-onnx.sh).
   implementation(files("libs/sherpa-onnx-1.13.4.aar"))
+  implementation(libs.commons.compress)
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.activity.compose)

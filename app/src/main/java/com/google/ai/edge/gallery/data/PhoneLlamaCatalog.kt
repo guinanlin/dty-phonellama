@@ -28,25 +28,27 @@ object PhoneLlamaCatalog {
   val EXTENDED_MODELS: List<AllowedModel> = listOf(
 
     // -----------------------------------------------------------------------
-    // SenseVoice (sherpa-onnx ONNX, CPU; QNN when a QNN pack is present)
-    // Silero VAD is bundled in APK assets. Delete any old GGUF SenseVoice first.
+    // SenseVoice (sherpa-onnx): QNN pack + CPU ONNX fallback
+    // Silero VAD is bundled in APK assets. Delete any old SenseVoice first.
+    // QNN segments are capped at 30 seconds (fixed input shape).
     // -----------------------------------------------------------------------
     AllowedModel(
       name = "SenseVoice-Small",
-      modelId = "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
-      modelFile = "model.int8.onnx",
-      commitHash = "main",
-      description = "SenseVoice int8 via sherpa-onnx for Chinese, English, Japanese, " +
-        "Korean, Cantonese, with language/emotion/event labels (~237 MB ONNX + tokens). " +
-        "Runs on CPU; QNN used automatically when a Qualcomm QNN model pack is installed. " +
-        "Replaces the previous GGUF/llama.cpp path — re-download required.",
-      sizeInBytes = 237_115_547L,
+      modelId = "k2-fsa/sherpa-onnx-qnn-sense-voice",
+      modelFile =
+        "sherpa-onnx-qnn-30-seconds-sense-voice-zh-en-ja-ko-yue-2025-09-09-int8-android-aarch64.tar.bz2",
+      commitHash = "asr-models-qnn",
+      description = "SenseVoice via sherpa-onnx with Qualcomm QNN (NPU) acceleration and CPU " +
+        "ONNX fallback. Chinese/English/Japanese/Korean/Cantonese with language/emotion/event " +
+        "labels. QNN max segment length is 30s (~158 MB QNN pack + ~237 MB ONNX). " +
+        "Re-download required after upgrading from GGUF or CPU-only ONNX installs.",
+      sizeInBytes = 158_200_000L,
       minDeviceMemoryInGb = 4,
       defaultConfig = DefaultConfig(
         topK = 1,
         topP = 1.0f,
         temperature = 0.0f,
-        accelerators = "cpu",
+        accelerators = "qnn,cpu",
         visionAccelerator = null,
         maxContextLength = null,
         maxTokens = 0,
@@ -55,17 +57,20 @@ object PhoneLlamaCatalog {
       bestForTaskTypes = listOf(BuiltInTaskId.LLM_ASK_AUDIO),
       llmSupportAudio = true,
       runtimeType = RuntimeType.SHERPA_ONNX_ASR,
-      url = "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/" +
-        "resolve/main/model.int8.onnx?download=true",
+      url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models-qnn/" +
+        "sherpa-onnx-qnn-30-seconds-sense-voice-zh-en-ja-ko-yue-2025-09-09-int8-android-aarch64.tar.bz2",
+      isZip = true,
+      // Extracted QNN pack dir (must be non-empty so download-complete detection works).
+      unzipDir = "qnn",
       extraDataFiles =
         listOf(
           ModelDataFile(
-            name = "tokens",
+            name = "cpu-onnx",
             url =
               "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/" +
-                "resolve/main/tokens.txt?download=true",
-            downloadFileName = "tokens.txt",
-            sizeInBytes = 315_894L,
+                "resolve/main/model.int8.onnx?download=true",
+            downloadFileName = "model.int8.onnx",
+            sizeInBytes = 237_115_547L,
           ),
         ),
     ),

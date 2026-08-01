@@ -1444,6 +1444,7 @@ constructor(
             Accelerator.GPU.label -> Accelerator.GPU
             Accelerator.CPU.label -> Accelerator.CPU
             Accelerator.NPU.label -> Accelerator.NPU
+            Accelerator.QNN.label -> Accelerator.QNN
             else -> null // Ignore unknown accelerator labels
           }
         }

@@ -56,6 +56,10 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 
 private const val TAG = "AGDownloadWorker"
 
@@ -258,55 +262,26 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
             outputTmpFile.renameTo(originalFile)
             Log.d(TAG, "Download done")
 
-            // Unzip if the downloaded file is a zip.
-            if (isZip && unzippedDir != null) {
+            // Unpack the main archive once (not extra data files).
+            if (isZip && unzippedDir != null && file.fileName == fileName) {
               setProgress(Data.Builder().putBoolean(KEY_MODEL_START_UNZIPPING, true).build())
 
-              // Prepare target dir.
-              val destDir =
-                File(
-                  externalFilesDir,
-                  listOf(modelDir, version, unzippedDir).joinToString(File.separator),
-                )
+              val destParts = mutableListOf(modelDir, version)
+              if (!unzippedDir.isNullOrEmpty()) {
+                destParts.add(unzippedDir)
+              }
+              val destDir = File(externalFilesDir, destParts.joinToString(File.separator))
               if (!destDir.exists()) {
                 destDir.mkdirs()
               }
 
-              // Unzip.
-              val unzipBuffer = ByteArray(4096)
-              val zipFilePath =
+              val archivePath =
                 "${externalFilesDir}${File.separator}$modelDir${File.separator}$version${File.separator}${fileName}"
-              val zipIn = ZipInputStream(BufferedInputStream(FileInputStream(zipFilePath)))
-              var zipEntry: ZipEntry? = zipIn.nextEntry
+              extractArchive(File(archivePath), destDir)
+              flattenSingleTopLevelDir(destDir)
 
-              while (zipEntry != null) {
-                val filePath = destDir.absolutePath + File.separator + zipEntry.name
-
-                // Extract files.
-                if (!zipEntry.isDirectory) {
-                  // extract file
-                  val bos = FileOutputStream(filePath)
-                  bos.use { curBos ->
-                    var len: Int
-                    while (zipIn.read(unzipBuffer).also { len = it } > 0) {
-                      curBos.write(unzipBuffer, 0, len)
-                    }
-                  }
-                }
-                // Create dir.
-                else {
-                  val dir = File(filePath)
-                  dir.mkdirs()
-                }
-
-                zipIn.closeEntry()
-                zipEntry = zipIn.nextEntry
-              }
-              zipIn.close()
-
-              // Delete the original file.
-              val zipFile = File(zipFilePath)
-              zipFile.delete()
+              // Delete the original archive.
+              File(archivePath).delete()
             }
           }
           Result.success()
@@ -365,5 +340,91 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
       notification,
       ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
     )
+  }
+
+  private fun extractArchive(archive: File, destDir: File) {
+    val name = archive.name.lowercase()
+    when {
+      name.endsWith(".zip") -> extractZip(archive, destDir)
+      name.endsWith(".tar.bz2") || name.endsWith(".tbz2") ->
+        extractTar(BZip2CompressorInputStream(BufferedInputStream(FileInputStream(archive))), destDir)
+      name.endsWith(".tar.gz") || name.endsWith(".tgz") ->
+        extractTar(GzipCompressorInputStream(BufferedInputStream(FileInputStream(archive))), destDir)
+      name.endsWith(".tar") ->
+        extractTar(BufferedInputStream(FileInputStream(archive)), destDir)
+      else ->
+        throw IOException("Unsupported archive format: ${archive.name}")
+    }
+  }
+
+  private fun extractZip(archive: File, destDir: File) {
+    val buffer = ByteArray(8192)
+    ZipInputStream(BufferedInputStream(FileInputStream(archive))).use { zipIn ->
+      var entry: ZipEntry? = zipIn.nextEntry
+      while (entry != null) {
+        writeArchiveEntry(destDir, entry.name, entry.isDirectory, zipIn, buffer)
+        zipIn.closeEntry()
+        entry = zipIn.nextEntry
+      }
+    }
+  }
+
+  private fun extractTar(compressed: java.io.InputStream, destDir: File) {
+    val buffer = ByteArray(8192)
+    TarArchiveInputStream(compressed).use { tarIn ->
+      var entry: TarArchiveEntry? = tarIn.nextEntry
+      while (entry != null) {
+        writeArchiveEntry(destDir, entry.name, entry.isDirectory, tarIn, buffer)
+        entry = tarIn.nextEntry
+      }
+    }
+  }
+
+  private fun writeArchiveEntry(
+    destDir: File,
+    entryName: String,
+    isDirectory: Boolean,
+    input: java.io.InputStream,
+    buffer: ByteArray,
+  ) {
+    // Reject path traversal.
+    val normalized = entryName.replace('\\', '/').trimStart('/')
+    if (normalized.isEmpty() || normalized.contains("..")) {
+      return
+    }
+    val outFile = File(destDir, normalized)
+    val destCanonical = destDir.canonicalFile
+    val outCanonical = outFile.canonicalFile
+    if (!outCanonical.path.startsWith(destCanonical.path + File.separator) &&
+        outCanonical != destCanonical
+    ) {
+      throw IOException("Illegal archive path: $entryName")
+    }
+    if (isDirectory) {
+      outFile.mkdirs()
+      return
+    }
+    outFile.parentFile?.mkdirs()
+    FileOutputStream(outFile).use { bos ->
+      var len: Int
+      while (input.read(buffer).also { len = it } > 0) {
+        bos.write(buffer, 0, len)
+      }
+    }
+  }
+
+  /** If the archive unpacked a single top-level folder, hoist its contents up. */
+  private fun flattenSingleTopLevelDir(destDir: File) {
+    val children = destDir.listFiles()?.filter { it.name != "." && it.name != ".." } ?: return
+    if (children.size != 1 || !children[0].isDirectory) return
+    val nested = children[0]
+    nested.listFiles()?.forEach { child ->
+      val target = File(destDir, child.name)
+      if (!child.renameTo(target)) {
+        child.copyRecursively(target, overwrite = true)
+        child.deleteRecursively()
+      }
+    }
+    nested.delete()
   }
 }

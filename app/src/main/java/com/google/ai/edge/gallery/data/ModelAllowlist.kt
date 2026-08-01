@@ -72,6 +72,9 @@ data class AllowedModel(
   val updateInfo: String? = null,
   /** Additional files downloaded alongside [modelFile] (e.g. tokens.txt). */
   val extraDataFiles: List<ModelDataFile>? = null,
+  /** When true, [modelFile] is an archive extracted into [unzipDir]. */
+  val isZip: Boolean? = null,
+  val unzipDir: String? = null,
 ) {
   fun toModel(): Model {
     // Construct HF download url.
@@ -134,6 +137,8 @@ data class AllowedModel(
             accelerators.add(Accelerator.GPU)
           } else if (item == "npu") {
             accelerators.add(Accelerator.NPU)
+          } else if (item == "qnn") {
+            accelerators.add(Accelerator.QNN)
           } else if (item == "tpu") {
             accelerators.add(Accelerator.TPU)
           }
@@ -232,6 +237,8 @@ data class AllowedModel(
       updateInfo = updateInfo ?: "",
       latestModelFile = ModelFile(fileName = downloadedFileName, commitHash = version),
       extraDataFiles = extraDataFiles ?: listOf(),
+      isZip = isZip == true,
+      unzipDir = unzipDir ?: "",
     )
   }
 

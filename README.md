@@ -146,11 +146,13 @@ and audio-event labels:
 ```
 
 SenseVoice is downloaded from the Audio Scribe model list and runs locally via
-**sherpa-onnx** (ONNX Runtime). Silero VAD is bundled in the APK. Acceleration
-is **CPU** by default; **QNN** is used automatically on Qualcomm devices when a
-QNN SenseVoice model pack is present. The previous GGUF/llama.cpp SenseVoice
-path is removed — delete any old SenseVoice download and fetch the new ONNX
-package (~237 MB + tokens).
+**sherpa-onnx**. The catalog downloads the official **QNN** pack (`libmodel.so` +
+`tokens.txt`) plus a CPU **ONNX** fallback (`model.int8.onnx`). On Qualcomm
+devices with HTP runtime libs bundled in the APK, Configuration can select
+**QNN** (default) or **CPU**; otherwise it falls back to CPU. QNN segments are
+capped at **30 seconds** (longer audio is split by VAD). Silero VAD is bundled
+in the APK. Delete any old SenseVoice download (GGUF or CPU-only ONNX) and
+re-download after upgrading (~158 MB QNN pack + ~237 MB ONNX).
 
 ### `POST /activate`
 

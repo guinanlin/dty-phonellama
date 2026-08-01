@@ -17,6 +17,7 @@ import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
+import com.k2fsa.sherpa.onnx.QnnConfig
 import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
@@ -25,11 +26,10 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * SenseVoice ASR via sherpa-onnx (ONNX Runtime).
+ * SenseVoice ASR via sherpa-onnx.
  *
- * Uses Silero VAD for segmentation, then Offline SenseVoice for each speech
- * segment. Provider selection prefers QNN on Qualcomm devices when a QNN model
- * pack is present; otherwise falls back to CPU ONNX.
+ * Prefers Qualcomm QNN when the QNN model pack and HTP runtime libs are
+ * available; otherwise falls back to CPU ONNX.
  */
 class SenseVoiceSherpaEngine(
   context: Context,
@@ -37,8 +37,7 @@ class SenseVoiceSherpaEngine(
 ) : AsrEngine {
   private val appContext = context.applicationContext
   private val lock = Any()
-  private val modelDir = File(model.getPath(appContext)).parentFile
-    ?: throw IllegalStateException("SenseVoice model directory is missing")
+  private val modelDir = SherpaSenseVoiceFactory.resolveModelDir(appContext, model)
 
   var activeAccelerator: String
     private set
@@ -48,11 +47,13 @@ class SenseVoiceSherpaEngine(
 
   init {
     val requested =
-      model.getStringConfigValue(key = ConfigKeys.ACCELERATOR, defaultValue = "CPU")
-    val providerChoice = SherpaSenseVoiceFactory.selectProvider(
-      modelDir = modelDir,
-      requestedAccelerator = requested,
-    )
+      model.getStringConfigValue(key = ConfigKeys.ACCELERATOR, defaultValue = "QNN")
+    val providerChoice =
+      SherpaSenseVoiceFactory.selectProvider(
+        context = appContext,
+        modelDir = modelDir,
+        requestedAccelerator = requested,
+      )
     activeAccelerator = providerChoice.label
 
     val vadPath = copyVadAsset(appContext)
@@ -78,18 +79,21 @@ class SenseVoiceSherpaEngine(
     var chosen = providerChoice
     recognizer =
       try {
-        SherpaSenseVoiceFactory.createRecognizer(modelDir, chosen)
+        SherpaSenseVoiceFactory.createRecognizer(appContext, modelDir, chosen)
       } catch (e: Throwable) {
         if (chosen.provider == "qnn") {
           Log.w(TAG, "QNN SenseVoice init failed, falling back to CPU", e)
           chosen = SherpaSenseVoiceFactory.ProviderChoice(provider = "cpu", label = "CPU")
           activeAccelerator = "CPU"
-          SherpaSenseVoiceFactory.createRecognizer(modelDir, chosen)
+          SherpaSenseVoiceFactory.createRecognizer(appContext, modelDir, chosen)
         } else {
           throw e
         }
       }
-    Log.i(TAG, "SenseVoice sherpa-onnx ready provider=$activeAccelerator dir=${modelDir.absolutePath}")
+    Log.i(
+      TAG,
+      "SenseVoice sherpa-onnx ready provider=$activeAccelerator dir=${modelDir.absolutePath}",
+    )
   }
 
   override fun transcribe(wavBytes: ByteArray): AsrResult {
@@ -101,7 +105,6 @@ class SenseVoiceSherpaEngine(
 
       val segments = segmentWithVad(samples)
       if (segments.isEmpty()) {
-        // Short clips may not trip VAD; fall back to whole-utterance decode.
         return decodeSegment(samples)
       }
 
@@ -168,7 +171,6 @@ class SenseVoiceSherpaEngine(
       }
       offset += vadWindowSize
     }
-    // Flush trailing speech.
     vad.flush()
     while (!vad.empty()) {
       segments.add(vad.front().samples)
@@ -192,7 +194,6 @@ class SenseVoiceSherpaEngine(
     private const val SAMPLE_RATE = 16000
     private const val VAD_FILE_NAME = "silero_vad.onnx"
 
-    /** Decode 16-bit PCM WAV (or raw PCM16LE) into float samples in [-1, 1]. */
     fun decodeWavToFloatSamples(bytes: ByteArray): FloatArray {
       if (bytes.size < 44) {
         return pcm16ToFloat(bytes)
@@ -201,7 +202,6 @@ class SenseVoiceSherpaEngine(
       if (header != "RIFF") {
         return pcm16ToFloat(bytes)
       }
-      // Find "data" chunk.
       var offset = 12
       while (offset + 8 <= bytes.size) {
         val chunkId = String(bytes, offset, 4, Charsets.US_ASCII)
@@ -214,7 +214,6 @@ class SenseVoiceSherpaEngine(
         }
         offset += chunkSize
       }
-      // Fallback: skip classic 44-byte header.
       return pcm16ToFloat(bytes.copyOfRange(44, bytes.size))
     }
 
@@ -237,10 +236,43 @@ object SherpaSenseVoiceFactory {
   private const val TOKENS = "tokens.txt"
   private const val QNN_LIB = "libmodel.so"
   private const val QNN_BIN = "model.bin"
+  private const val QNN_BACKEND = "libQnnHtp.so"
+  private const val QNN_SYSTEM = "libQnnSystem.so"
 
   data class ProviderChoice(val provider: String, val label: String)
 
+  fun resolveModelDir(context: Context, model: Model): File {
+    val base =
+      File(
+        listOf(context.getExternalFilesDir(null)?.absolutePath, model.normalizedName, model.version)
+          .joinToString(File.separator),
+      )
+    val candidates =
+      buildList {
+        if (model.unzipDir.isNotEmpty()) add(File(base, model.unzipDir))
+        add(base)
+        // Flattened archive may also leave a single nested folder.
+        base.listFiles()?.filter { it.isDirectory }?.forEach { add(it) }
+      }
+        .distinct()
+    // Prefer a directory that has tokens.txt (required by sherpa). Prefer QNN pack when present.
+    val withTokens = candidates.filter { File(it, TOKENS).exists() }
+    withTokens.firstOrNull { File(it, QNN_LIB).exists() }?.let {
+      return it
+    }
+    withTokens.firstOrNull()?.let {
+      return it
+    }
+    candidates
+      .firstOrNull { File(it, MODEL_ONNX).exists() || File(it, QNN_LIB).exists() }
+      ?.let {
+        return it
+      }
+    return if (model.isZip && model.unzipDir.isNotEmpty()) File(base, model.unzipDir) else base
+  }
+
   fun selectProvider(
+    context: Context,
     modelDir: File,
     requestedAccelerator: String,
   ): ProviderChoice {
@@ -248,45 +280,80 @@ object SherpaSenseVoiceFactory {
       requestedAccelerator.equals("QNN", ignoreCase = true) ||
         requestedAccelerator.equals("NPU", ignoreCase = true)
     val isQualcomm = isQualcommDevice()
-    val hasQnnPack =
-      File(modelDir, QNN_LIB).exists() &&
-        (File(modelDir, QNN_BIN).exists() || File(modelDir, TOKENS).exists())
-    return if (wantsQnn && isQualcomm && hasQnnPack) {
+    val nativeDir = File(context.applicationInfo.nativeLibraryDir)
+    val hasRuntime =
+      File(nativeDir, QNN_BACKEND).exists() && File(nativeDir, QNN_SYSTEM).exists()
+    val hasQnnPack = File(modelDir, QNN_LIB).exists() && File(modelDir, TOKENS).exists()
+    return if (wantsQnn && isQualcomm && hasQnnPack && hasRuntime) {
       ProviderChoice(provider = "qnn", label = "QNN")
     } else {
       if (wantsQnn) {
         Log.i(
           TAG,
-          "QNN not available (qualcomm=$isQualcomm pack=$hasQnnPack); using CPU",
+          "QNN not available (qualcomm=$isQualcomm pack=$hasQnnPack runtime=$hasRuntime); using CPU",
         )
       }
       ProviderChoice(provider = "cpu", label = "CPU")
     }
   }
 
-  fun createRecognizer(modelDir: File, choice: ProviderChoice): OfflineRecognizer {
+  fun createRecognizer(
+    context: Context,
+    modelDir: File,
+    choice: ProviderChoice,
+  ): OfflineRecognizer {
     val tokens = File(modelDir, TOKENS)
     require(tokens.exists()) { "Missing SenseVoice tokens.txt in ${modelDir.absolutePath}" }
 
-    val senseVoiceModel =
+    val nativeDir = context.applicationInfo.nativeLibraryDir
+    val senseVoice =
       when (choice.provider) {
         "qnn" -> {
           val lib = File(modelDir, QNN_LIB)
           require(lib.exists()) { "Missing QNN libmodel.so in ${modelDir.absolutePath}" }
-          lib.absolutePath
+          val backend = File(nativeDir, QNN_BACKEND)
+          val system = File(nativeDir, QNN_SYSTEM)
+          require(backend.exists()) { "Missing $QNN_BACKEND in $nativeDir" }
+          require(system.exists()) { "Missing $QNN_SYSTEM in $nativeDir" }
+          val contextBinary = File(modelDir, QNN_BIN)
+          OfflineSenseVoiceModelConfig(
+            model = lib.absolutePath,
+            language = "auto",
+            useInverseTextNormalization = true,
+            qnnConfig =
+              QnnConfig(
+                backendLib = backend.absolutePath,
+                contextBinary = contextBinary.absolutePath,
+                systemLib = system.absolutePath,
+              ),
+          )
         }
         else -> {
           val onnx = File(modelDir, MODEL_ONNX)
-          // Also accept whatever downloadFileName produced as the main model file.
+          val parentOnnx = File(modelDir.parentFile, MODEL_ONNX)
           val fallback =
-            modelDir.listFiles()?.firstOrNull {
-              it.isFile && it.name.endsWith(".onnx") && !it.name.contains("vad")
+            sequenceOf(modelDir, modelDir.parentFile)
+              .filterNotNull()
+              .flatMap { dir ->
+                dir.listFiles()?.asSequence() ?: emptySequence()
+              }
+              .firstOrNull {
+                it.isFile && it.name.endsWith(".onnx") && !it.name.contains("vad")
+              }
+          val modelFile =
+            when {
+              onnx.exists() -> onnx
+              parentOnnx.exists() -> parentOnnx
+              else -> fallback
             }
-          val modelFile = if (onnx.exists()) onnx else fallback
           require(modelFile != null && modelFile.exists()) {
             "Missing SenseVoice ONNX model in ${modelDir.absolutePath}"
           }
-          modelFile.absolutePath
+          OfflineSenseVoiceModelConfig(
+            model = modelFile.absolutePath,
+            language = "auto",
+            useInverseTextNormalization = true,
+          )
         }
       }
 
@@ -295,12 +362,7 @@ object SherpaSenseVoiceFactory {
         featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
         modelConfig =
           OfflineModelConfig(
-            senseVoice =
-              OfflineSenseVoiceModelConfig(
-                model = senseVoiceModel,
-                language = "auto",
-                useInverseTextNormalization = true,
-              ),
+            senseVoice = senseVoice,
             tokens = tokens.absolutePath,
             numThreads = if (choice.provider == "cpu") 2 else 1,
             provider = choice.provider,
@@ -311,12 +373,15 @@ object SherpaSenseVoiceFactory {
   }
 
   private fun isQualcommDevice(): Boolean {
-    val hardware = listOf(
-      Build.HARDWARE,
-      Build.BOARD,
-      Build.SOC_MODEL.takeIf { Build.VERSION.SDK_INT >= Build.VERSION_CODES.S } ?: "",
-      Build.MANUFACTURER,
-    ).joinToString(" ").lowercase()
+    val hardware =
+      listOf(
+          Build.HARDWARE,
+          Build.BOARD,
+          Build.SOC_MODEL.takeIf { Build.VERSION.SDK_INT >= Build.VERSION_CODES.S } ?: "",
+          Build.MANUFACTURER,
+        )
+        .joinToString(" ")
+        .lowercase()
     return hardware.contains("qcom") ||
       hardware.contains("qualcomm") ||
       hardware.contains("sm8") ||

@@ -41,6 +41,11 @@ jobs:
           chmod +x scripts/fetch-sherpa-onnx.sh
           ./scripts/fetch-sherpa-onnx.sh
 
+      - name: Fetch SenseVoice QNN native libs
+        run: |
+          chmod +x scripts/fetch-sherpa-qnn-natives.sh
+          ./scripts/fetch-sherpa-qnn-natives.sh
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
