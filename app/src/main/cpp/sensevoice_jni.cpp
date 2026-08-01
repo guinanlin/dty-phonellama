@@ -8,7 +8,9 @@
 #include <vector>
 
 #include <android/log.h>
+#ifdef PHONELLAMA_ENABLE_VULKAN
 #include <ggml-vulkan.h>
+#endif
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -43,9 +45,14 @@ std::string runSenseVoice(
         "-m", modelPath,
         "--vad", vadPath,
         "-a", audioPath,
+#ifdef PHONELLAMA_ENABLE_VULKAN
         "--backend", accelerator,
+#endif
         "--keep-tags",
     };
+#ifndef PHONELLAMA_ENABLE_VULKAN
+    (void) accelerator;
+#endif
     std::vector<char *> argv;
     argv.reserve(args.size() + 1);
     for (auto &arg : args) {
@@ -128,5 +135,9 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_google_ai_edge_gallery_runtime_asr_SenseVoiceNative_nativeHasGpuBackend(
     JNIEnv * /* env */,
     jobject /* thiz */) {
+#ifdef PHONELLAMA_ENABLE_VULKAN
     return ggml_backend_vk_get_device_count() > 0 ? JNI_TRUE : JNI_FALSE;
+#else
+    return JNI_FALSE;
+#endif
 }

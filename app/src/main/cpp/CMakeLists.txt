@@ -6,25 +6,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
+# GPU (Vulkan) support is opt-in. Cross-compiling llama.cpp's ggml-vulkan for
+# Android requires a host vulkan-shaders-gen build, glslc, and SPIRV-Headers,
+# which is fragile in the Gradle externalNativeBuild sandbox. Keeping it off by
+# default guarantees the APK always builds (CPU path); flip -DPHONELLAMA_ENABLE_VULKAN=ON
+# once the host shader toolchain is wired up in CI.
+option(PHONELLAMA_ENABLE_VULKAN "Build the SenseVoice ggml Vulkan GPU backend" OFF)
+
 include(FetchContent)
-
-if(ANDROID)
-    set(ANDROID_VULKAN_SYSROOT
-        "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot")
-    set(Vulkan_INCLUDE_DIR
-        "${ANDROID_VULKAN_SYSROOT}/usr/include" CACHE PATH "" FORCE)
-    set(Vulkan_LIBRARY
-        "${ANDROID_VULKAN_SYSROOT}/usr/lib/aarch64-linux-android/${CMAKE_SYSTEM_VERSION}/libvulkan.so"
-        CACHE FILEPATH "" FORCE)
-
-    # Ubuntu's spirv-headers package contains the headers but does not ship
-    # SPIRV-HeadersConfig.cmake, which llama.cpp's Vulkan CMake requires.
-    set(SPIRV_HEADERS_DIR "${CMAKE_CURRENT_BINARY_DIR}/spirv-headers-cmake")
-    file(MAKE_DIRECTORY "${SPIRV_HEADERS_DIR}")
-    file(WRITE "${SPIRV_HEADERS_DIR}/SPIRV-HeadersConfig.cmake"
-        "set(SPIRV-Headers_FOUND TRUE)\n")
-    set(SPIRV-Headers_DIR "${SPIRV_HEADERS_DIR}" CACHE PATH "" FORCE)
-endif()
 
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -32,8 +21,30 @@ set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
-set(GGML_VULKAN ON CACHE BOOL "" FORCE)
-set(GGML_VULKAN_CHECK_RESULTS OFF CACHE BOOL "" FORCE)
+
+if(PHONELLAMA_ENABLE_VULKAN)
+    if(ANDROID)
+        set(ANDROID_VULKAN_SYSROOT
+            "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot")
+        set(Vulkan_INCLUDE_DIR
+            "${ANDROID_VULKAN_SYSROOT}/usr/include" CACHE PATH "" FORCE)
+        set(Vulkan_LIBRARY
+            "${ANDROID_VULKAN_SYSROOT}/usr/lib/aarch64-linux-android/${CMAKE_SYSTEM_VERSION}/libvulkan.so"
+            CACHE FILEPATH "" FORCE)
+
+        # Ubuntu's spirv-headers package contains the headers but does not ship
+        # SPIRV-HeadersConfig.cmake, which llama.cpp's Vulkan CMake requires.
+        set(SPIRV_HEADERS_DIR "${CMAKE_CURRENT_BINARY_DIR}/spirv-headers-cmake")
+        file(MAKE_DIRECTORY "${SPIRV_HEADERS_DIR}")
+        file(WRITE "${SPIRV_HEADERS_DIR}/SPIRV-HeadersConfig.cmake"
+            "set(SPIRV-Headers_FOUND TRUE)\n")
+        set(SPIRV-Headers_DIR "${SPIRV_HEADERS_DIR}" CACHE PATH "" FORCE)
+        set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
+        set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM BOTH)
+    endif()
+    set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+    set(GGML_VULKAN_CHECK_RESULTS OFF CACHE BOOL "" FORCE)
+endif()
 
 FetchContent_Declare(
     llama
@@ -58,37 +69,41 @@ set(FUNASR_ROOT "${funasr_SOURCE_DIR}/runtime/llama.cpp")
 set(FUNASR_COMMON "${FUNASR_ROOT}/funasr-common")
 set(FUNASR_SENSEVOICE "${FUNASR_ROOT}/funasr-sensevoice/funasr-sensevoice.cpp")
 
-# Patch the upstream CLI at configure time so its graph can use the selected
-# llama.cpp backend while keeping the upstream model and audio implementation.
 set(FUNASR_PATCHED "${CMAKE_CURRENT_BINARY_DIR}/funasr-sensevoice.cpp")
 file(READ "${FUNASR_SENSEVOICE}" FUNASR_SOURCE)
-string(REPLACE
-    "#include \"ggml-cpu.h\""
-    "#include \"ggml-cpu.h\"\n#include \"ggml-vulkan.h\""
-    FUNASR_SOURCE "${FUNASR_SOURCE}")
-string(REPLACE
-    "int main(int argc,char**argv){"
-    "int main(int argc,char**argv){ bool use_gpu=false;"
-    FUNASR_SOURCE "${FUNASR_SOURCE}")
-string(REPLACE
-    "else if(!strcmp(argv[i],\"--keep-tags\"))keep_tags=true;"
-    "else if(!strcmp(argv[i],\"--keep-tags\"))keep_tags=true;\n else if(!strcmp(argv[i],\"--backend\")&&i+1<argc)use_gpu=!strcmp(argv[++i],\"gpu\");"
-    FUNASR_SOURCE "${FUNASR_SOURCE}")
-string(REPLACE
-    "ggml_backend_t be=ggml_backend_cpu_init();"
-    "ggml_backend_t be=use_gpu && ggml_backend_vk_get_device_count()>0 ? ggml_backend_vk_init(0) : ggml_backend_cpu_init();"
-    FUNASR_SOURCE "${FUNASR_SOURCE}")
-string(REPLACE
-    "ggml_gallocr_t ga=ggml_gallocr_new(ggml_backend_cpu_buffer_type());"
-    "ggml_gallocr_t ga=ggml_gallocr_new(use_gpu && ggml_backend_vk_get_device_count()>0 ? ggml_backend_vk_buffer_type(0) : ggml_backend_cpu_buffer_type());"
-    FUNASR_SOURCE "${FUNASR_SOURCE}")
-string(REPLACE
-    "ggml_backend_cpu_set_n_threads(be,8);"
-    "if(!use_gpu)ggml_backend_cpu_set_n_threads(be,8);"
-    FUNASR_SOURCE "${FUNASR_SOURCE}")
+
+if(PHONELLAMA_ENABLE_VULKAN)
+    # Patch the upstream CLI at configure time so its graph can use the selected
+    # llama.cpp backend while keeping the upstream model and audio implementation.
+    string(REPLACE
+        "#include \"ggml-cpu.h\""
+        "#include \"ggml-cpu.h\"\n#include \"ggml-vulkan.h\""
+        FUNASR_SOURCE "${FUNASR_SOURCE}")
+    string(REPLACE
+        "int main(int argc,char**argv){"
+        "int main(int argc,char**argv){ bool use_gpu=false;"
+        FUNASR_SOURCE "${FUNASR_SOURCE}")
+    string(REPLACE
+        "else if(!strcmp(argv[i],\"--keep-tags\"))keep_tags=true;"
+        "else if(!strcmp(argv[i],\"--keep-tags\"))keep_tags=true;\n else if(!strcmp(argv[i],\"--backend\")&&i+1<argc)use_gpu=!strcmp(argv[++i],\"gpu\");"
+        FUNASR_SOURCE "${FUNASR_SOURCE}")
+    string(REPLACE
+        "ggml_backend_t be=ggml_backend_cpu_init();"
+        "ggml_backend_t be=use_gpu && ggml_backend_vk_get_device_count()>0 ? ggml_backend_vk_init(0) : ggml_backend_cpu_init();"
+        FUNASR_SOURCE "${FUNASR_SOURCE}")
+    string(REPLACE
+        "ggml_gallocr_t ga=ggml_gallocr_new(ggml_backend_cpu_buffer_type());"
+        "ggml_gallocr_t ga=ggml_gallocr_new(use_gpu && ggml_backend_vk_get_device_count()>0 ? ggml_backend_vk_buffer_type(0) : ggml_backend_cpu_buffer_type());"
+        FUNASR_SOURCE "${FUNASR_SOURCE}")
+    string(REPLACE
+        "ggml_backend_cpu_set_n_threads(be,8);"
+        "if(!use_gpu)ggml_backend_cpu_set_n_threads(be,8);"
+        FUNASR_SOURCE "${FUNASR_SOURCE}")
+endif()
+
 file(WRITE "${FUNASR_PATCHED}" "${FUNASR_SOURCE}")
 
-# The patched implementation remains a self-contained CLI. Renaming main lets
+# The (patched) implementation remains a self-contained CLI. Renaming main lets
 # the JNI bridge invoke the validated inference path in-process.
 add_library(funasr_sensevoice OBJECT "${FUNASR_PATCHED}")
 target_compile_definitions(funasr_sensevoice PRIVATE main=phonellama_funasr_main)
@@ -114,5 +129,11 @@ target_include_directories(
     "${llama_SOURCE_DIR}/ggml/include"
     "${llama_SOURCE_DIR}/ggml/src"
 )
-target_link_libraries(phonellama_asr PRIVATE ggml ggml-vulkan log android vulkan)
+
+if(PHONELLAMA_ENABLE_VULKAN)
+    target_compile_definitions(phonellama_asr PRIVATE PHONELLAMA_ENABLE_VULKAN)
+    target_link_libraries(phonellama_asr PRIVATE ggml ggml-vulkan log android vulkan)
+else()
+    target_link_libraries(phonellama_asr PRIVATE ggml log android)
+endif()
 target_compile_features(phonellama_asr PRIVATE cxx_std_17)
