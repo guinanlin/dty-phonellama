@@ -120,6 +120,9 @@ class SenseVoiceSherpaEngine(
   }
 
   private fun decodeSegment(samples: FloatArray): AsrResult {
+    if (samples.isEmpty()) {
+      return AsrResult(text = "")
+    }
     val stream = recognizer.createStream()
     return try {
       stream.acceptWaveform(samples, SAMPLE_RATE)
@@ -131,6 +134,9 @@ class SenseVoiceSherpaEngine(
         emotion = result.emotion.takeIf { it.isNotBlank() },
         events = result.event.takeIf { it.isNotBlank() }?.let { listOf(it) } ?: emptyList(),
       )
+    } catch (e: Throwable) {
+      Log.e(TAG, "decodeSegment failed for ${samples.size} samples", e)
+      throw e
     } finally {
       stream.release()
     }
@@ -209,25 +215,38 @@ object SherpaSenseVoiceFactory {
         listOf(context.getExternalFilesDir(null)?.absolutePath, model.normalizedName, model.version)
           .joinToString(File.separator),
       )
+    // If the catalog declares an unzipDir, only use it when it actually contains
+    // the required model artifacts. Otherwise fall back to the base dir or any
+    // sibling directory that has a model file.
     val candidates =
       buildList {
-        if (model.unzipDir.isNotEmpty()) add(File(base, model.unzipDir))
+        if (model.unzipDir.isNotEmpty()) {
+          val unzipDir = File(base, model.unzipDir)
+          if (unzipDir.isDirectory && unzipDir.listFiles()?.any { it.isFile } == true) {
+            add(unzipDir)
+          }
+        }
         add(base)
         base.listFiles()?.filter { it.isDirectory }?.forEach { add(it) }
       }
         .distinct()
+    Log.i(TAG, "resolveModelDir candidates: ${candidates.map { it.absolutePath }}")
     val withTokens = candidates.filter { File(it, TOKENS).exists() }
     withTokens.firstOrNull { File(it, QNN_LIB).exists() }?.let {
+      Log.i(TAG, "resolveModelDir chose QNN dir: ${it.absolutePath}")
       return it
     }
     withTokens.firstOrNull()?.let {
+      Log.i(TAG, "resolveModelDir chose token dir: ${it.absolutePath}")
       return it
     }
     candidates
       .firstOrNull { File(it, MODEL_ONNX).exists() || File(it, QNN_LIB).exists() }
       ?.let {
+        Log.i(TAG, "resolveModelDir chose model dir: ${it.absolutePath}")
         return it
       }
+    Log.w(TAG, "resolveModelDir falling back to: ${base.absolutePath}")
     return if (model.isZip && model.unzipDir.isNotEmpty()) File(base, model.unzipDir) else base
   }
 
@@ -246,17 +265,18 @@ object SherpaSenseVoiceFactory {
     val hasQnnPack = File(modelDir, QNN_LIB).exists() && File(modelDir, TOKENS).exists()
     // First-run generation of model.bin from libmodel.so is known to hard-crash on
     // some devices; only enable QNN when a ready context binary is already present.
-    val hasContextBinary = File(modelDir, QNN_BIN).isFile && File(modelDir, QNN_BIN).length() > 0
-    return if (wantsQnn && isQualcomm && hasQnnPack && hasRuntime && hasContextBinary) {
+    val contextBinary = File(modelDir, QNN_BIN)
+    val hasContextBinary = contextBinary.isFile && contextBinary.length() > 0
+    val useQnn = wantsQnn && isQualcomm && hasQnnPack && hasRuntime && hasContextBinary
+    Log.i(
+      TAG,
+      "Provider check: wantsQnn=$wantsQnn qualcomm=$isQualcomm hasQnnPack=$hasQnnPack " +
+        "hasRuntime=$hasRuntime contextBinary=${contextBinary.absolutePath} " +
+        "contextBinaryExists=$hasContextBinary -> useQnn=$useQnn",
+    )
+    return if (useQnn) {
       ProviderChoice(provider = "qnn", label = "QNN")
     } else {
-      if (wantsQnn) {
-        Log.i(
-          TAG,
-          "QNN not available (qualcomm=$isQualcomm pack=$hasQnnPack runtime=$hasRuntime " +
-            "model.bin=$hasContextBinary); using CPU",
-        )
-      }
       ProviderChoice(provider = "cpu", label = "CPU")
     }
   }
@@ -266,8 +286,14 @@ object SherpaSenseVoiceFactory {
     modelDir: File,
     choice: ProviderChoice,
   ): OfflineRecognizer {
-    val tokens = File(modelDir, TOKENS)
-    require(tokens.exists()) { "Missing SenseVoice tokens.txt in ${modelDir.absolutePath}" }
+    // Prefer tokens next to the actual model file (CPU ONNX lives in the parent dir,
+    // QNN pack lives in the unzip dir). Fall back to sibling directories if needed.
+    val tokens =
+      sequenceOf(modelDir, modelDir.parentFile)
+        .filterNotNull()
+        .map { File(it, TOKENS) }
+        .firstOrNull { it.isFile }
+    require(tokens != null) { "Missing SenseVoice tokens.txt near ${modelDir.absolutePath}" }
 
     val nativeDir = context.applicationInfo.nativeLibraryDir
     val senseVoice =
@@ -308,6 +334,11 @@ object SherpaSenseVoiceFactory {
               parentOnnx != null && parentOnnx.exists() -> parentOnnx
               else -> fallback
             }
+          Log.i(
+            TAG,
+            "CPU SenseVoice model file: ${modelFile?.absolutePath ?: "NONE"}, " +
+              "tokens: ${tokens.absolutePath}",
+          )
           require(modelFile != null && modelFile.exists()) {
             "Missing SenseVoice ONNX model in ${modelDir.absolutePath}"
           }

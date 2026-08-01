@@ -72,6 +72,14 @@ object PhoneLlamaCatalog {
             downloadFileName = "model.int8.onnx",
             sizeInBytes = 237_115_547L,
           ),
+          ModelDataFile(
+            name = "cpu-tokens",
+            url =
+              "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/" +
+                "resolve/main/tokens.txt?download=true",
+            downloadFileName = "tokens.txt",
+            sizeInBytes = 323_072L,
+          ),
         ),
     ),
 
