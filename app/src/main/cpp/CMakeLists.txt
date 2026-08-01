@@ -14,7 +14,7 @@ if(ANDROID)
     set(Vulkan_INCLUDE_DIR
         "${ANDROID_VULKAN_SYSROOT}/usr/include" CACHE PATH "" FORCE)
     set(Vulkan_LIBRARY
-        "${ANDROID_VULKAN_SYSROOT}/usr/lib/aarch64-linux-android/35/libvulkan.so"
+        "${ANDROID_VULKAN_SYSROOT}/usr/lib/aarch64-linux-android/${CMAKE_SYSTEM_VERSION}/libvulkan.so"
         CACHE FILEPATH "" FORCE)
 endif()
 
@@ -64,18 +64,15 @@ string(REPLACE
     FUNASR_SOURCE "${FUNASR_SOURCE}")
 string(REPLACE
     "else if(!strcmp(argv[i],\"--keep-tags\"))keep_tags=true;"
-    "else if(!strcmp(argv[i],\"--keep-tags\"))keep_tags=true;\n"
-    " else if(!strcmp(argv[i],\"--backend\")&&i+1<argc)use_gpu=!strcmp(argv[++i],\"gpu\");"
+    "else if(!strcmp(argv[i],\"--keep-tags\"))keep_tags=true;\n else if(!strcmp(argv[i],\"--backend\")&&i+1<argc)use_gpu=!strcmp(argv[++i],\"gpu\");"
     FUNASR_SOURCE "${FUNASR_SOURCE}")
 string(REPLACE
     "ggml_backend_t be=ggml_backend_cpu_init();"
-    "ggml_backend_t be=use_gpu && ggml_backend_vk_get_device_count()>0 ? "
-    "ggml_backend_vk_init(0) : ggml_backend_cpu_init();"
+    "ggml_backend_t be=use_gpu && ggml_backend_vk_get_device_count()>0 ? ggml_backend_vk_init(0) : ggml_backend_cpu_init();"
     FUNASR_SOURCE "${FUNASR_SOURCE}")
 string(REPLACE
     "ggml_gallocr_t ga=ggml_gallocr_new(ggml_backend_cpu_buffer_type());"
-    "ggml_gallocr_t ga=ggml_gallocr_new(use_gpu && ggml_backend_vk_get_device_count()>0 ? "
-    "ggml_backend_vk_buffer_type(0) : ggml_backend_cpu_buffer_type());"
+    "ggml_gallocr_t ga=ggml_gallocr_new(use_gpu && ggml_backend_vk_get_device_count()>0 ? ggml_backend_vk_buffer_type(0) : ggml_backend_cpu_buffer_type());"
     FUNASR_SOURCE "${FUNASR_SOURCE}")
 string(REPLACE
     "ggml_backend_cpu_set_n_threads(be,8);"
