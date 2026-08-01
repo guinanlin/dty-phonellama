@@ -39,8 +39,8 @@ android {
     targetSdk = 35
     versionCode = providers.environmentVariable("VERSION_CODE")
         .map { it.toInt() }
-        .getOrElse(10014)
-    versionName = providers.environmentVariable("VERSION_NAME").getOrElse("1.0.14")
+        .getOrElse(10016)
+    versionName = providers.environmentVariable("VERSION_NAME").getOrElse("1.0.16")
 
     // Needed for HuggingFace auth workflows.
     // Use the scheme of the "Redirect URLs" in HuggingFace app.
