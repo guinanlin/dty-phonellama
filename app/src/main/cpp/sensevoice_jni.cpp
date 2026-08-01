@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <android/log.h>
+#include <ggml-vulkan.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -22,7 +23,8 @@ constexpr char kTag[] = "PhoneLlamaASR";
 std::string runSenseVoice(
     const std::string &modelPath,
     const std::string &vadPath,
-    const std::string &audioPath) {
+    const std::string &audioPath,
+    const std::string &accelerator) {
     int outputPipe[2];
     if (pipe(outputPipe) != 0) {
         throw std::runtime_error("cannot create ASR output pipe");
@@ -41,6 +43,7 @@ std::string runSenseVoice(
         "-m", modelPath,
         "--vad", vadPath,
         "-a", audioPath,
+        "--backend", accelerator,
         "--keep-tags",
     };
     std::vector<char *> argv;
@@ -80,26 +83,35 @@ Java_com_google_ai_edge_gallery_runtime_asr_SenseVoiceNative_nativeTranscribe(
     jobject /* thiz */,
     jstring modelPath,
     jstring vadPath,
-    jstring audioPath) {
-    if (modelPath == nullptr || vadPath == nullptr || audioPath == nullptr) {
+    jstring audioPath,
+    jstring accelerator) {
+    if (modelPath == nullptr || vadPath == nullptr || audioPath == nullptr ||
+        accelerator == nullptr) {
         return nullptr;
     }
 
     const char *modelChars = env->GetStringUTFChars(modelPath, nullptr);
     const char *vadChars = env->GetStringUTFChars(vadPath, nullptr);
     const char *audioChars = env->GetStringUTFChars(audioPath, nullptr);
-    if (modelChars == nullptr || vadChars == nullptr || audioChars == nullptr) {
+    const char *acceleratorChars = env->GetStringUTFChars(accelerator, nullptr);
+    if (modelChars == nullptr || vadChars == nullptr || audioChars == nullptr ||
+        acceleratorChars == nullptr) {
         if (modelChars != nullptr) env->ReleaseStringUTFChars(modelPath, modelChars);
         if (vadChars != nullptr) env->ReleaseStringUTFChars(vadPath, vadChars);
         if (audioChars != nullptr) env->ReleaseStringUTFChars(audioPath, audioChars);
+        if (acceleratorChars != nullptr) {
+            env->ReleaseStringUTFChars(accelerator, acceleratorChars);
+        }
         return nullptr;
     }
 
     try {
-        const std::string output = runSenseVoice(modelChars, vadChars, audioChars);
+        const std::string output =
+            runSenseVoice(modelChars, vadChars, audioChars, acceleratorChars);
         env->ReleaseStringUTFChars(modelPath, modelChars);
         env->ReleaseStringUTFChars(vadPath, vadChars);
         env->ReleaseStringUTFChars(audioPath, audioChars);
+        env->ReleaseStringUTFChars(accelerator, acceleratorChars);
         return env->NewStringUTF(output.c_str());
     } catch (const std::exception &error) {
         __android_log_print(
@@ -107,6 +119,14 @@ Java_com_google_ai_edge_gallery_runtime_asr_SenseVoiceNative_nativeTranscribe(
         env->ReleaseStringUTFChars(modelPath, modelChars);
         env->ReleaseStringUTFChars(vadPath, vadChars);
         env->ReleaseStringUTFChars(audioPath, audioChars);
+        env->ReleaseStringUTFChars(accelerator, acceleratorChars);
         return nullptr;
     }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_google_ai_edge_gallery_runtime_asr_SenseVoiceNative_nativeHasGpuBackend(
+    JNIEnv * /* env */,
+    jobject /* thiz */) {
+    return ggml_backend_vk_get_device_count() > 0 ? JNI_TRUE : JNI_FALSE;
 }

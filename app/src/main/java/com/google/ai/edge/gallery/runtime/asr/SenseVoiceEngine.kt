@@ -8,6 +8,7 @@
 package com.google.ai.edge.gallery.runtime.asr
 
 import android.content.Context
+import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.data.Model
 import java.io.File
 import java.util.UUID
@@ -17,8 +18,8 @@ import java.util.UUID
  *
  * The v0.1.9 upstream implementation is a command-line inference program. The Android native
  * library compiles that implementation with its entry point renamed and invokes it through JNI.
- * Calls are serialized because the upstream CLI creates a CPU graph and loads the GGUF model per
- * request.
+ * Calls are serialized because the upstream CLI creates a graph and loads the GGUF model per
+ * request. GPU mode uses llama.cpp's Vulkan backend when the device exposes a Vulkan GPU.
  */
 class SenseVoiceEngine(
   context: Context,
@@ -28,6 +29,20 @@ class SenseVoiceEngine(
   private val modelPath = model.getPath(appContext)
   private val vadPath = copyVadAsset(appContext)
   private val lock = Any()
+  private val requestedAccelerator =
+    model.getStringConfigValue(
+      key = ConfigKeys.ACCELERATOR,
+      defaultValue = "GPU",
+    )
+
+  val activeAccelerator: String =
+    if (requestedAccelerator.equals("GPU", ignoreCase = true) &&
+      SenseVoiceNative.nativeHasGpuBackend()
+    ) {
+      "GPU"
+    } else {
+      "CPU"
+    }
 
   override fun transcribe(wavBytes: ByteArray): AsrResult {
     synchronized(lock) {
@@ -38,6 +53,7 @@ class SenseVoiceEngine(
           modelPath = modelPath,
           vadPath = vadPath,
           audioPath = audioFile.absolutePath,
+            accelerator = activeAccelerator,
         ) ?: throw IllegalStateException("SenseVoice native inference returned no result")
         parseResult(raw)
       } finally {

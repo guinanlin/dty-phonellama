@@ -38,6 +38,11 @@ jobs:
             ndk;27.2.12479018
             cmake;3.22.1
 
+      - name: Install Vulkan shader build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc spirv-headers libvulkan-dev
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 

@@ -16,5 +16,8 @@ internal object SenseVoiceNative {
     modelPath: String,
     vadPath: String,
     audioPath: String,
+    accelerator: String,
   ): String?
+
+  external fun nativeHasGpuBackend(): Boolean
 }

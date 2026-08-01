@@ -44,7 +44,7 @@ object PhoneLlamaCatalog {
         topK = 1,
         topP = 1.0f,
         temperature = 0.0f,
-        accelerators = "cpu",
+        accelerators = "gpu,cpu",
         visionAccelerator = null,
         maxContextLength = null,
         maxTokens = 0,

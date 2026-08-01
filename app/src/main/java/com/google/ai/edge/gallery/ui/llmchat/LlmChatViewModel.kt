@@ -25,6 +25,7 @@ import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.runtime.asr.AsrEngine
+import com.google.ai.edge.gallery.runtime.asr.SenseVoiceEngine
 import com.google.ai.edge.gallery.data.SystemPromptRepository
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.runtime.runtimeHelper
@@ -150,6 +151,7 @@ open class LlmChatViewModelBase(
         try {
           val engine = model.instance as? AsrEngine
             ?: throw IllegalStateException("SenseVoice ASR engine is not initialized")
+          val activeAccelerator = (engine as? SenseVoiceEngine)?.activeAccelerator ?: "CPU"
           val start = System.currentTimeMillis()
           val results = audioClips.map { engine.transcribe(it) }
           val text = results.joinToString("\n") { result ->
@@ -170,7 +172,7 @@ open class LlmChatViewModelBase(
               content = text,
               side = ChatSide.AGENT,
               latencyMs = (System.currentTimeMillis() - start).toFloat(),
-              accelerator = "CPU",
+              accelerator = activeAccelerator,
             ),
           )
           setPreparing(false)
