@@ -567,6 +567,8 @@
 
     async function testChatStream(body) {
       const start = performance.now();
+      let fullText = '';
+      let finished = false;
       try {
         const resp = await fetch(baseUrl + '/v1/chat/completions', {
           method: 'POST',
@@ -586,16 +588,29 @@
           lines.forEach(line => {
             if (line.startsWith('data: ')) {
               const payload = line.slice(6);
-              if (payload === '[DONE]') return;
+              if (payload === '[DONE]') {
+                finished = true;
+                return;
+              }
               try {
                 const obj = JSON.parse(payload);
-                const delta = obj.choices && obj.choices[0] && obj.choices[0].delta && obj.choices[0].delta.content;
+                const choice = obj.choices && obj.choices[0];
+                const delta = choice && choice.delta && choice.delta.content;
                 if (delta) text += delta;
+                if (choice && choice.finish_reason === 'stop') finished = true;
               } catch (e) {}
             }
           });
-          if (text) showResponse(text, resp.status, Math.round(performance.now() - start));
+          if (text) {
+            fullText += text;
+            const duration = Math.round(performance.now() - start);
+            showResponse(fullText, resp.status, duration);
+            document.getElementById('responseMeta').textContent = 'HTTP ' + resp.status + ' · streaming';
+          }
         }
+        const duration = Math.round(performance.now() - start);
+        showResponse(fullText, resp.status, duration);
+        document.getElementById('responseMeta').textContent = 'HTTP ' + resp.status + ' · ' + duration + 'ms · done';
       } catch (err) {
         showResponse('Stream error: ' + err.message, 0, 0);
       }

@@ -21,6 +21,7 @@ import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.runtime.LlmModelHelper
 import com.google.ai.edge.gallery.runtime.asr.AsrEngine
 import com.google.gson.Gson
+import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonReader
@@ -712,11 +713,15 @@ class EdgeServer(
                 if (cancelled.get()) return@runInference
                 if (partial.isNotEmpty()) {
                   val delta = JsonObject().apply { addProperty("content", partial) }
-                  val choice = JsonObject().apply {
-                    addProperty("index", 0)
-                    add("delta", delta)
-                    addProperty("finish_reason", if (isDone) "stop" else null.toString())
-                  }
+          val choice = JsonObject().apply {
+            addProperty("index", 0)
+            add("delta", delta)
+            if (isDone) {
+              addProperty("finish_reason", "stop")
+            } else {
+              add("finish_reason", JsonNull.INSTANCE)
+            }
+          }
                   val chunk = JsonObject().apply {
                     addProperty("id", requestId)
                     addProperty("object", "chat.completion.chunk")
