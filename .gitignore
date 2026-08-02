@@ -37,3 +37,6 @@ app/libs/sherpa-onnx-*.aar.tmp
 # QNN natives extracted by scripts/fetch-sherpa-qnn-natives.sh / CI
 app/src/main/jniLibs/
 .cache/sherpa-qnn/
+
+# Punctuation model fetched by scripts/fetch-sherpa-punct.sh
+third_party/sherpa-punct/

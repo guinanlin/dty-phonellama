@@ -147,10 +147,11 @@ data class Model(
   /**
    * The URL to download the model from.
    *
-   * If the url is from HuggingFace, we will automatically prompt users to fetch access token if the
-   * model is gated.
+   * Official `huggingface.co` download hosts are rewritten to `hf-mirror.com` at catalog load /
+   * download time so CN installs stay on the in-app WorkManager path. Mutable so the download
+   * button can apply the mirror rewrite for models already held in memory.
    */
-  val url: String = "",
+  var url: String = "",
 
   /**
    * The size of the model file in bytes.

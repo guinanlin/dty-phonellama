@@ -140,6 +140,16 @@ fun EdgeServerScreen(modelManagerViewModel: ModelManagerViewModel) {
       if (ip.isNotEmpty()) "http://$ip:${portText.ifEmpty { "8888" }}"
       else "http://localhost:${portText.ifEmpty { "8888" }}"
     }
+  val wsBaseUrl =
+    if (serverState.isRunning) {
+      val host = serverState.lanIp.ifEmpty { "localhost" }
+      "ws://$host:${serverState.wsPort}${EdgeServer.VOLC_ASR_WS_PATH}"
+    } else {
+      val ip = EdgeServerManager.getKnownLanIp(context)
+      val wsPort = (portText.ifEmpty { "8888" }).toIntOrNull()?.plus(1) ?: EdgeServer.DEFAULT_WS_PORT
+      if (ip.isNotEmpty()) "ws://$ip:$wsPort${EdgeServer.VOLC_ASR_WS_PATH}"
+      else "ws://localhost:$wsPort${EdgeServer.VOLC_ASR_WS_PATH}"
+    }
 
   Column(
     modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(16.dp),
@@ -215,19 +225,29 @@ fun EdgeServerScreen(modelManagerViewModel: ModelManagerViewModel) {
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
           )
-          val statusPort = if (serverState.isRunning) serverState.port else portText.ifEmpty { "8888" }
+          val statusPort =
+            if (serverState.isRunning) serverState.port
+            else portText.toIntOrNull() ?: EdgeServer.DEFAULT_PORT
+          val statusWsPort =
+            if (serverState.isRunning) serverState.wsPort else statusPort + 1
           Text(
-            "localhost:$statusPort",
+            "HTTP localhost:$statusPort  ·  WS :$statusWsPort",
             style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.secondary,
           )
+          Text(
+            "ws://127.0.0.1:$statusWsPort${EdgeServer.VOLC_ASR_WS_PATH}",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.tertiary,
+          )
           if (knownLanIp.isNotEmpty()) {
             Text(
               if (serverState.lanMode && serverState.isRunning) {
-                "$knownLanIp:$statusPort"
+                "LAN $knownLanIp:$statusPort / ws:$statusWsPort"
               } else {
-                "$knownLanIp:$statusPort (ZeroTier)"
+                "$knownLanIp:$statusPort (ZeroTier) / ws:$statusWsPort"
               },
               style = MaterialTheme.typography.bodySmall,
               fontFamily = FontFamily.Monospace,
@@ -619,6 +639,18 @@ curl $baseUrl/v1/chat/completions \
     ],
     "stream": true
   }'
+            """.trimIndent(), context)
+
+            SnippetSection("Volc ASR — streaming WebSocket (SenseVoice)", """
+Endpoint: $wsBaseUrl
+Protocol: Volcengine bigmodel_async binary (Ogg Opus TaskRequest)
+Handshake headers:
+  X-Api-Key: local
+  X-Api-Resource-Id: volc.seedasr.sauc.duration
+  X-Api-Request-Id: <uuid>
+  X-Api-Sequence: -1
+Flow: StartConnection(1) → 50 → StartSession(100) → 150 → TaskRequest(200) → 451 → FinishSession(102) → 152
+Requires SenseVoice-Small active on device.
             """.trimIndent(), context)
 
             SnippetSection("Python — openai client", """

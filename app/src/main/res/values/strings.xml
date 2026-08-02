@@ -93,6 +93,8 @@
   <string name="drawer_settings_description" translatable="false">Manage application settings</string>
   <string name="drawer_models_label" translatable="false">Models</string>
   <string name="drawer_models_description" translatable="false">Browse, try, and benchmark models</string>
+  <string name="drawer_edge_label" translatable="false">Edge</string>
+  <string name="drawer_edge_description" translatable="false">Local OpenAI-compatible API server</string>
   <string name="edit" translatable="false">Edit</string>
   <string name="edit_secret" translatable="false">Edit secret</string>
   <string name="enter_instruction" translatable="false">Enter instruction</string>

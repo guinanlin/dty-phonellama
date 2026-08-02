@@ -153,6 +153,29 @@ devices with HTP runtime libs bundled in the APK, Configuration can select
 ready `model.bin` context binary; without it the engine uses CPU ONNX. Long
 audio is split by fixed duration (QNN max **30 seconds**).
 
+### Volcengine-compatible streaming ASR (WebSocket)
+
+When **SenseVoice-Small** is active and the Edge Server is running, a second
+listener exposes Volcengine `bigmodel_async` wire-compatible streaming ASR on
+**HTTP port + 1** (default `ws://PHONE-IP:8889/api/v3/sauc/bigmodel_async`).
+
+| Item | Value |
+| --- | --- |
+| Protocol | WebSocket binary (Volcengine SAUC) |
+| Audio | Ogg container + Opus, 16 kHz mono (`TaskRequest` event 200) |
+| Auth headers | `X-Api-Key`, `X-Api-Resource-Id`, `X-Api-Request-Id`, `X-Api-Sequence: -1` (local pass-through) |
+| Flow | `StartConnection(1)` → `50` → `StartSession(100)` → `150` → `TaskRequest(200)` → `451` partial → `FinishSession(102)` → `152` final |
+
+This uses **simulated streaming** (Silero VAD disabled; energy-based segmentation +
+offline SenseVoice decode), not a true online streaming model. Existing
+`VoiceStickAsrClient` / `VolcengineAsrProtocol` clients can point at the local
+endpoint instead of `wss://openspeech.bytedance.com/...`.
+
+SenseVoice raw text has no punctuation. From **v1.0.43**, PhoneLlama post-processes
+ASR output with sherpa-onnx **OfflinePunctuation** (ct-transformer zh-en int8).
+The punct model (~65MB archive) is downloaded in the background when SenseVoice
+is first activated; until it is ready, results are returned without punctuation.
+
 ### `POST /activate`
 
 Switch the active model without restarting the server.

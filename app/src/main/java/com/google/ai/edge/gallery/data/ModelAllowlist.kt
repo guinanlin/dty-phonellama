@@ -77,11 +77,13 @@ data class AllowedModel(
   val unzipDir: String? = null,
 ) {
   fun toModel(): Model {
-    // Construct HF download url.
+    // Construct HF download url (via hf-mirror.com for in-app CN-friendly downloads).
     var version = commitHash
     var downloadedFileName = modelFile
     var downloadUrl =
-      url ?: "https://huggingface.co/$modelId/resolve/$commitHash/$modelFile?download=true"
+      HfMirror.toMirrorUrl(
+        url ?: HfMirror.downloadUrl(modelId, commitHash, modelFile),
+      )
     var sizeInBytes = sizeInBytes
 
     // Handle per-soc model files.
@@ -92,8 +94,14 @@ data class AllowedModel(
           version = info.commitHash ?: "-"
           downloadedFileName = info.modelFile ?: "-"
           downloadUrl =
-            info.url
-              ?: "https://huggingface.co/$modelId/resolve/${info.commitHash}/${info.modelFile}?download=true"
+            HfMirror.toMirrorUrl(
+              info.url
+                ?: HfMirror.downloadUrl(
+                  modelId,
+                  info.commitHash ?: commitHash,
+                  info.modelFile ?: modelFile,
+                ),
+            )
           sizeInBytes = info.sizeInBytes ?: -1
         }
       }
@@ -236,7 +244,10 @@ data class AllowedModel(
       updatableModelFiles = updatableModelFiles ?: listOf(),
       updateInfo = updateInfo ?: "",
       latestModelFile = ModelFile(fileName = downloadedFileName, commitHash = version),
-      extraDataFiles = extraDataFiles ?: listOf(),
+      extraDataFiles =
+        (extraDataFiles ?: listOf()).map { file ->
+          file.copy(url = HfMirror.toMirrorUrl(file.url))
+        },
       isZip = isZip == true,
       unzipDir = unzipDir ?: "",
     )

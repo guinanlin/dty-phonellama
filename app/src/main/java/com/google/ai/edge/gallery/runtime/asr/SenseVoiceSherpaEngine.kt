@@ -17,7 +17,6 @@ import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
-import com.k2fsa.sherpa.onnx.QnnConfig
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -80,34 +79,51 @@ class SenseVoiceSherpaEngine(
       TAG,
       "SenseVoice sherpa-onnx ready provider=$activeAccelerator dir=${modelDir.absolutePath}",
     )
+    // SenseVoice has no built-in punctuation; load sherpa ct-transformer in background.
+    SherpaPunctuation.ensureAsync(appContext)
   }
 
   override fun transcribe(wavBytes: ByteArray): AsrResult {
     synchronized(lock) {
       val samples = decodeWavToFloatSamples(wavBytes)
-      if (samples.isEmpty()) {
-        return AsrResult(text = "")
-      }
-
-      val segments = splitByDuration(samples, maxSegmentSamples)
-      val texts = mutableListOf<String>()
-      var language: String? = null
-      var emotion: String? = null
-      val events = linkedSetOf<String>()
-      for (segment in segments) {
-        val result = decodeSegment(segment)
-        if (result.text.isNotBlank()) texts.add(result.text)
-        if (language == null) language = result.language
-        if (emotion == null) emotion = result.emotion
-        events.addAll(result.events)
-      }
-      return AsrResult(
-        text = texts.joinToString(" ").trim(),
-        language = language,
-        emotion = emotion,
-        events = events.toList(),
-      )
+      return transcribeSamplesInternal(samples)
     }
+  }
+
+  override fun transcribeSamples(samples: FloatArray): AsrResult {
+    synchronized(lock) {
+      return transcribeSamplesInternal(samples)
+    }
+  }
+
+  private fun transcribeSamplesInternal(samples: FloatArray): AsrResult {
+    if (samples.isEmpty()) {
+      return AsrResult(text = "")
+    }
+
+    val segments = splitByDuration(samples, maxSegmentSamples)
+    val texts = mutableListOf<String>()
+    var language: String? = null
+    var emotion: String? = null
+    val events = linkedSetOf<String>()
+    for (segment in segments) {
+      val result = decodeSegment(segment)
+      if (result.text.isNotBlank()) texts.add(result.text)
+      if (language == null) language = result.language
+      if (emotion == null) emotion = result.emotion
+      events.addAll(result.events)
+    }
+    val joined = joinTranscript(texts)
+    val punctuated = SherpaPunctuation.addPunctuation(joined)
+    if (punctuated != joined) {
+      Log.d(TAG, "punctuated '${joined.take(60)}' → '${punctuated.take(60)}'")
+    }
+    return AsrResult(
+      text = punctuated,
+      language = language,
+      emotion = emotion,
+      events = events.toList(),
+    )
   }
 
   override fun close() {
@@ -193,6 +209,37 @@ class SenseVoiceSherpaEngine(
         offset = end
       }
       return out
+    }
+
+    /** Join ASR pieces without inserting spaces between CJK characters. */
+    fun joinTranscript(parts: List<String>): String {
+      if (parts.isEmpty()) return ""
+      val sb = StringBuilder()
+      for (part in parts) {
+        val piece = part.trim()
+        if (piece.isEmpty()) continue
+        if (sb.isEmpty()) {
+          sb.append(piece)
+          continue
+        }
+        val prev = sb.last()
+        val next = piece.first()
+        val needSpace = !isCjk(prev) && !isCjk(next) && !prev.isWhitespace() && !next.isWhitespace()
+        if (needSpace) sb.append(' ')
+        sb.append(piece)
+      }
+      return sb.toString().trim()
+    }
+
+    private fun isCjk(c: Char): Boolean {
+      val block = Character.UnicodeBlock.of(c)
+      return block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
+        block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A ||
+        block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B ||
+        block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS ||
+        block == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION ||
+        block == Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS ||
+        block == Character.UnicodeBlock.GENERAL_PUNCTUATION
     }
   }
 }
@@ -286,37 +333,13 @@ object SherpaSenseVoiceFactory {
     modelDir: File,
     choice: ProviderChoice,
   ): OfflineRecognizer {
-    // Prefer tokens next to the actual model file (CPU ONNX lives in the parent dir,
-    // QNN pack lives in the unzip dir). Fall back to sibling directories if needed.
-    val tokens =
-      sequenceOf(modelDir, modelDir.parentFile)
-        .filterNotNull()
-        .map { File(it, TOKENS) }
-        .firstOrNull { it.isFile }
-    require(tokens != null) { "Missing SenseVoice tokens.txt near ${modelDir.absolutePath}" }
-
     val nativeDir = context.applicationInfo.nativeLibraryDir
     val senseVoice =
       when (choice.provider) {
         "qnn" -> {
-          val lib = File(modelDir, QNN_LIB)
-          require(lib.exists()) { "Missing QNN libmodel.so in ${modelDir.absolutePath}" }
-          val backend = File(nativeDir, QNN_BACKEND)
-          val system = File(nativeDir, QNN_SYSTEM)
-          require(backend.exists()) { "Missing $QNN_BACKEND in $nativeDir" }
-          require(system.exists()) { "Missing $QNN_SYSTEM in $nativeDir" }
-          val contextBinary = File(modelDir, QNN_BIN)
-          OfflineSenseVoiceModelConfig(
-            model = lib.absolutePath,
-            language = "auto",
-            useInverseTextNormalization = true,
-            qnnConfig =
-              QnnConfig(
-                backendLib = backend.absolutePath,
-                contextBinary = contextBinary.absolutePath,
-                systemLib = system.absolutePath,
-              ),
-          )
+          // sherpa-onnx 1.12.17's Android binding does not expose QnnConfig.
+          // Keep the provider selection logic, but let the caller fall back to CPU.
+          error("QNN SenseVoice is unavailable in the bundled sherpa-onnx 1.12.17 binding")
         }
         else -> {
           val onnx = File(modelDir, MODEL_ONNX)
@@ -334,21 +357,36 @@ object SherpaSenseVoiceFactory {
               parentOnnx != null && parentOnnx.exists() -> parentOnnx
               else -> fallback
             }
-          Log.i(
-            TAG,
-            "CPU SenseVoice model file: ${modelFile?.absolutePath ?: "NONE"}, " +
-              "tokens: ${tokens.absolutePath}",
-          )
           require(modelFile != null && modelFile.exists()) {
             "Missing SenseVoice ONNX model in ${modelDir.absolutePath}"
           }
+          // Prefer zh over auto: auto often mis-tags Mandarin as <|yue|> and hurts accuracy.
           OfflineSenseVoiceModelConfig(
             model = modelFile.absolutePath,
-            language = "auto",
+            language = "zh",
             useInverseTextNormalization = true,
           )
         }
       }
+
+    // Tokens must match the exact model file being used. For CPU the ONNX lives in the
+    // parent dir, so prefer tokens there. For QNN the lib/tokens live in the unzip dir.
+    val modelFile =
+      when (choice.provider) {
+        "qnn" -> File(modelDir, QNN_LIB)
+        else -> File(senseVoice.model)
+      }
+    val tokens =
+      sequenceOf(modelFile.parentFile, modelDir, modelDir.parentFile)
+        .filterNotNull()
+        .map { File(it, TOKENS) }
+        .firstOrNull { it.isFile }
+    require(tokens != null) { "Missing SenseVoice tokens.txt near ${modelDir.absolutePath}" }
+
+    Log.i(
+      TAG,
+      "SenseVoice ${choice.provider} model: ${modelFile.absolutePath}, tokens: ${tokens.absolutePath}",
+    )
 
     val config =
       OfflineRecognizerConfig(

@@ -157,6 +157,7 @@
     }
     .method.get { background: rgba(74, 222, 128, 0.15); color: var(--success); }
     .method.post { background: rgba(124, 108, 255, 0.15); color: var(--accent); }
+    .method.ws { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
     .endpoint-card .path { font-family: monospace; font-size: 13px; color: var(--text); }
     .endpoint-card .desc { font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
 
@@ -209,10 +210,31 @@
       justify-content: center;
       transition: transform 0.1s, box-shadow 0.2s;
     }
-    .record-btn:hover { transform: scale(1.05); }
+    .record-btn:hover:not(:disabled) { transform: scale(1.05); }
+    .record-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      filter: grayscale(0.6);
+    }
     .record-btn.recording {
       animation: pulse 1.2s infinite;
       box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7);
+    }
+    .mic-warning {
+      display: none;
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      background: rgba(251, 191, 36, 0.08);
+      color: var(--warning);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .mic-warning code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: var(--text);
     }
     @keyframes pulse {
       0% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7); }
@@ -354,12 +376,18 @@
 
       <!-- Audio -->
       <div class="tab-content" id="audio-tab">
-        <p class="hint">方式 1：按住红色按钮录制（最长 30 秒）；方式 2：上传 .wav 文件。</p>
+        <p class="hint" id="audioHint">方式 1：点击红色按钮开始/停止录音（最长 30 秒）；方式 2：上传音频文件（自动转 16kHz WAV）。</p>
+        <p class="hint">流式（Volc 线级兼容）：<code id="wsAsrUrl" class="base-url-ws"></code> — WebSocket 二进制协议，Ogg Opus TaskRequest，事件 50→150→451→152。握手 Header：<code>X-Api-Key</code>、<code>X-Api-Resource-Id</code>、<code>X-Api-Request-Id</code>、<code>X-Api-Sequence: -1</code>（本地默认放行）。</p>
+        <div id="micWarning" class="mic-warning"></div>
+        <div id="audioModelWarning" class="hint" style="display:none; color:var(--warning);">
+          ⚠ 当前激活模型不是 SenseVoice-Small，无法转写。请先激活 SenseVoice-Small。
+        </div>
+        <button id="audioActivateBtn" class="btn secondary" style="display:none; margin-bottom:12px;" onclick="activateSenseVoice()">Activate SenseVoice-Small</button>
         <div class="audio-controls">
-          <button id="recordBtn" class="record-btn" title="按住录音">🎙</button>
+          <button id="recordBtn" class="record-btn" title="点击开始/停止录音">🎙</button>
           <span id="recordTime" class="record-time">00:00</span>
-          <button class="btn secondary" onclick="document.getElementById('wavFile').click()">Upload WAV</button>
-          <input type="file" id="wavFile" class="file-input" accept="audio/wav" onchange="onWavSelected(this)">
+          <button class="btn secondary" onclick="document.getElementById('wavFile').click()">Upload Audio</button>
+          <input type="file" id="wavFile" class="file-input" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm,.aac,.flac" onchange="onAudioSelected(this)">
         </div>
         <div class="form-group">
           <label>已选音频</label>
@@ -404,6 +432,17 @@
 
   <script>
     const baseUrl = window.location.origin;
+    const wsBaseUrl = (() => {
+      try {
+        const u = new URL(baseUrl);
+        const httpPort = parseInt(u.port || '8888', 10);
+        u.port = String(httpPort + 1);
+        u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+        return u.origin + '/api/v3/sauc/bigmodel_async';
+      } catch (e) {
+        return 'ws://localhost:8889/api/v3/sauc/bigmodel_async';
+      }
+    })();
     let recordedBlob = null;
     let mediaRecorder = null;
     let audioChunks = [];
@@ -413,13 +452,15 @@
     let activeModelName = '';
 
     document.querySelectorAll('.base-url').forEach(el => el.textContent = baseUrl);
+    document.querySelectorAll('.base-url-ws').forEach(el => el.textContent = wsBaseUrl);
 
     const endpoints = [
       { method: 'GET', path: '/health', desc: '服务状态与模型加载状态', tab: 'overview' },
       { method: 'GET', path: '/v1/models', desc: '列出所有可用模型', tab: 'overview' },
       { method: 'POST', path: '/v1/models/{name}/activate', desc: '切换/激活指定模型', tab: 'overview' },
       { method: 'POST', path: '/v1/chat/completions', desc: 'OpenAI 兼容对话补全', tab: 'chat' },
-      { method: 'POST', path: '/v1/audio/transcriptions', desc: 'SenseVoice 语音转文字', tab: 'audio' },
+      { method: 'POST', path: '/v1/audio/transcriptions', desc: 'SenseVoice 语音转文字（批量）', tab: 'audio' },
+      { method: 'WS', path: '/api/v3/sauc/bigmodel_async', desc: 'Volc 兼容流式 ASR（Ogg Opus，端口+1）', tab: 'audio' },
       { method: 'GET', path: '/admin/config', desc: '查看运行时配置', tab: 'admin' },
       { method: 'POST', path: '/admin/config', desc: '修改运行时配置', tab: 'admin' },
     ];
@@ -501,9 +542,31 @@
         document.getElementById('baseUrl').textContent = baseUrl;
         activeModelName = data.model || '';
         document.getElementById('activeModel').textContent = data.model || 'None';
+        updateAudioTabState();
       } catch (e) {
         document.getElementById('statusText').className = 'status offline';
         document.getElementById('statusText').innerHTML = '<span class="status-dot"></span> Offline';
+      }
+    }
+
+    function updateAudioTabState() {
+      const isSenseVoice = activeModelName === 'SenseVoice-Small';
+      const warn = document.getElementById('audioModelWarning');
+      const btn = document.getElementById('audioActivateBtn');
+      if (isSenseVoice) {
+        warn.style.display = 'none';
+        btn.style.display = 'none';
+      } else {
+        warn.style.display = 'block';
+        btn.style.display = 'inline-flex';
+      }
+    }
+
+    async function activateSenseVoice() {
+      if (availableModels.includes('SenseVoice-Small')) {
+        await activateModel('SenseVoice-Small');
+      } else {
+        showResponse('SenseVoice-Small 不在可用模型列表中，请先在应用内下载。', 0, 0);
       }
     }
 
@@ -616,16 +679,33 @@
       }
     }
 
-    function onWavSelected(input) {
-      const file = input.files[0];
-      if (!file) return;
-      recordedBlob = file;
-      document.getElementById('audioInfo').value = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
-      document.getElementById('audioSendBtn').disabled = false;
-      makeCurlBox('audioCurl', 'curl -X POST -F "file=@' + file.name + '" ' + baseUrl + '/v1/audio/transcriptions');
+    function canUseMicrophone() {
+      return !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
     }
 
-    function buildWavHeader(sampleCount) {
+    function updateMicAvailabilityUi() {
+      const ok = canUseMicrophone();
+      const warn = document.getElementById('micWarning');
+      const btn = document.getElementById('recordBtn');
+      const hint = document.getElementById('audioHint');
+      btn.disabled = !ok;
+      if (ok) {
+        warn.style.display = 'none';
+        warn.innerHTML = '';
+        hint.textContent = '方式 1：点击红色按钮开始/停止录音（最长 30 秒）；方式 2：上传音频文件（自动转 16kHz WAV）。';
+        return;
+      }
+      warn.style.display = 'block';
+      warn.innerHTML =
+        '当前页面不在安全上下文（Secure Context），浏览器禁用了麦克风 API（<code>navigator.mediaDevices</code> 为 undefined）。' +
+        '用局域网 IP 的 <code>http://</code> 访问时会出现此限制。<br>' +
+        '可用方案：① 优先用下方 <b>Upload Audio</b> 上传文件转写；② 在本机执行 ' +
+        '<code>adb reverse tcp:8888 tcp:8888</code> 后打开 <code>http://127.0.0.1:8888</code> 即可录音。';
+      hint.textContent = '麦克风不可用：请上传音频文件（支持 wav/mp3/m4a/webm 等，自动转 16kHz WAV）。';
+    }
+
+    function buildWavHeader(sampleCount, sampleRate) {
+      const rate = sampleRate || 16000;
       const buffer = new ArrayBuffer(44);
       const view = new DataView(buffer);
       const writeString = (offset, s) => { for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i)); };
@@ -637,8 +717,8 @@
       view.setUint32(16, 16, true);
       view.setUint16(20, 1, true);
       view.setUint16(22, 1, true);
-      view.setUint32(24, 16000, true);
-      view.setUint32(28, 32000, true);
+      view.setUint32(24, rate, true);
+      view.setUint32(28, rate * 2, true);
       view.setUint16(32, 2, true);
       view.setUint16(34, 16, true);
       writeString(36, 'data');
@@ -646,10 +726,96 @@
       return buffer;
     }
 
+    function floatTo16BitPcm(float32) {
+      const pcm = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) {
+        let s = Math.max(-1, Math.min(1, float32[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      return pcm;
+    }
+
+    function downsampleTo16k(float32, fromRate) {
+      if (fromRate === 16000) return float32;
+      const ratio = fromRate / 16000;
+      const newLen = Math.max(1, Math.floor(float32.length / ratio));
+      const out = new Float32Array(newLen);
+      for (let i = 0; i < newLen; i++) {
+        const start = Math.floor(i * ratio);
+        const end = Math.min(float32.length, Math.floor((i + 1) * ratio));
+        let sum = 0;
+        let count = 0;
+        for (let j = start; j < end; j++) { sum += float32[j]; count++; }
+        out[i] = count ? sum / count : float32[start] || 0;
+      }
+      return out;
+    }
+
+    function pcmToWavBlob(pcm) {
+      const header = buildWavHeader(pcm.length, 16000);
+      const wav = new Uint8Array(header.byteLength + pcm.byteLength);
+      wav.set(new Uint8Array(header), 0);
+      wav.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), header.byteLength);
+      return new Blob([wav], { type: 'audio/wav' });
+    }
+
+    function setRecordedAudio(blob, label) {
+      recordedBlob = blob;
+      document.getElementById('audioInfo').value = label;
+      document.getElementById('audioSendBtn').disabled = false;
+      makeCurlBox('audioCurl', 'curl -X POST -F "file=@audio.wav" ' + baseUrl + '/v1/audio/transcriptions');
+    }
+
+    async function decodeFileToWavBlob(file) {
+      const ab = await file.arrayBuffer();
+      // Native 16-bit mono/stereo WAV can be sent as-is if already 16kHz; otherwise resample.
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      try {
+        const decoded = await ctx.decodeAudioData(ab.slice(0));
+        const ch0 = decoded.getChannelData(0);
+        let mono;
+        if (decoded.numberOfChannels > 1) {
+          const ch1 = decoded.getChannelData(1);
+          mono = new Float32Array(ch0.length);
+          for (let i = 0; i < ch0.length; i++) mono[i] = (ch0[i] + ch1[i]) * 0.5;
+        } else {
+          mono = ch0;
+        }
+        const resampled = downsampleTo16k(mono, decoded.sampleRate);
+        return pcmToWavBlob(floatTo16BitPcm(resampled));
+      } finally {
+        await ctx.close().catch(() => {});
+      }
+    }
+
+    async function onAudioSelected(input) {
+      const file = input.files[0];
+      if (!file) return;
+      showResponse('正在转换音频为 16kHz WAV...', 0, 0);
+      try {
+        const wavBlob = await decodeFileToWavBlob(file);
+        const sizeKb = (wavBlob.size / 1024).toFixed(1);
+        setRecordedAudio(wavBlob, file.name + ' → 16kHz WAV (' + sizeKb + ' KB)');
+        showResponse('音频已就绪，可点击 POST /v1/audio/transcriptions 转写。', 0, 0);
+      } catch (err) {
+        // Fallback: send original file if decode fails (server expects WAV).
+        if (/\.wav$/i.test(file.name) || file.type === 'audio/wav') {
+          setRecordedAudio(file, file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)');
+          showResponse('已选择 WAV 文件（未重采样）。', 0, 0);
+        } else {
+          showResponse('无法解码该音频: ' + err.message + '。请改用 WAV/MP3/M4A。', 0, 0);
+        }
+      }
+    }
+
     async function testAudio() {
       switchTab('audio');
       if (!recordedBlob) {
-        showResponse('请先录音或上传 WAV 文件', 0, 0);
+        showResponse('请先录音或上传音频文件', 0, 0);
+        return;
+      }
+      if (activeModelName !== 'SenseVoice-Small') {
+        showResponse('当前模型不是 SenseVoice-Small，请点击“Activate SenseVoice-Small”后再试。', 0, 0);
         return;
       }
       showResponse('Transcribing...', 0, 0);
@@ -658,20 +824,33 @@
       await apiFetch('/v1/audio/transcriptions', { method: 'POST', body: form });
     }
 
-    // Recording with Web Audio API to WAV
+    // Click-to-toggle recording with Web Audio API → WAV
     const recordBtn = document.getElementById('recordBtn');
-    recordBtn.addEventListener('mousedown', startRecord);
-    recordBtn.addEventListener('touchstart', startRecord);
-    recordBtn.addEventListener('mouseup', stopRecord);
-    recordBtn.addEventListener('touchend', stopRecord);
-    recordBtn.addEventListener('mouseleave', stopRecord);
+    let stopTimer = null;
 
-    async function startRecord(e) {
+    recordBtn.addEventListener('click', async (e) => {
       e.preventDefault();
+      if (mediaRecorder) {
+        stopRecord();
+        return;
+      }
+      await startRecord();
+    });
+
+    async function startRecord() {
       if (mediaRecorder) return;
+      if (!canUseMicrophone()) {
+        updateMicAvailabilityUi();
+        showResponse(
+          '无法录音：当前不是 Secure Context（常见于 http://局域网IP:8888）。请改用 Upload Audio，或 adb reverse 后访问 http://127.0.0.1:8888。',
+          0, 0
+        );
+        return;
+      }
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
-        const ctx = new AudioContext({ sampleRate: 16000 });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+        const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        if (ctx.state === 'suspended') await ctx.resume();
         const source = ctx.createMediaStreamSource(stream);
         const processor = ctx.createScriptProcessor(4096, 1, 1);
         const chunks = [];
@@ -679,55 +858,58 @@
         processor.connect(ctx.destination);
         processor.onaudioprocess = ev => {
           const data = ev.inputBuffer.getChannelData(0);
-          const pcm = new Int16Array(data.length);
-          for (let i = 0; i < data.length; i++) {
-            let s = Math.max(-1, Math.min(1, data[i]));
-            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-          }
-          chunks.push(pcm);
+          const resampled = downsampleTo16k(data, ctx.sampleRate);
+          chunks.push(floatTo16BitPcm(resampled));
         };
         mediaRecorder = { stream, ctx, processor, source, chunks };
         recordBtn.classList.add('recording');
+        recordBtn.title = '点击停止录音';
         recordStartMs = Date.now();
         audioChunks = chunks;
         recordTimer = setInterval(() => {
           const s = Math.floor((Date.now() - recordStartMs) / 1000);
-          document.getElementById('recordTime').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
-        }, 500);
+          document.getElementById('recordTime').textContent =
+            String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+          if (s >= 30) stopRecord();
+        }, 250);
+        showResponse('录音中… 再次点击按钮结束。', 0, 0);
       } catch (err) {
-        showResponse('无法录音: ' + err.message, 0, 0);
+        showResponse('无法录音: ' + (err && err.message ? err.message : String(err)), 0, 0);
       }
     }
 
-    function stopRecord(e) {
+    function stopRecord() {
       if (!mediaRecorder) return;
-      e.preventDefault();
       clearInterval(recordTimer);
+      clearTimeout(stopTimer);
       recordBtn.classList.remove('recording');
+      recordBtn.title = '点击开始/停止录音';
       const { stream, ctx, processor, source, chunks } = mediaRecorder;
-      processor.disconnect();
-      source.disconnect();
+      try { processor.disconnect(); } catch (e) {}
+      try { source.disconnect(); } catch (e) {}
       stream.getTracks().forEach(t => t.stop());
-      ctx.close();
+      ctx.close().catch(() => {});
       mediaRecorder = null;
 
       let total = 0;
       chunks.forEach(c => total += c.length);
+      if (total < 1600) {
+        showResponse('录音太短，请重新录制。', 0, 0);
+        document.getElementById('recordTime').textContent = '00:00';
+        return;
+      }
       const all = new Int16Array(total);
       let offset = 0;
       chunks.forEach(c => { all.set(c, offset); offset += c.length; });
-      const header = buildWavHeader(total);
-      const wav = new Uint8Array(header.byteLength + all.byteLength);
-      wav.set(new Uint8Array(header), 0);
-      wav.set(new Uint8Array(all.buffer), header.byteLength);
-      recordedBlob = new Blob([wav], { type: 'audio/wav' });
-      const sizeKb = (wav.length / 1024).toFixed(1);
+      const wavBlob = pcmToWavBlob(all);
+      const sizeKb = (wavBlob.size / 1024).toFixed(1);
       const duration = (total / 16000).toFixed(1);
-      document.getElementById('audioInfo').value = 'Recorded ' + duration + 's (' + sizeKb + ' KB)';
-      document.getElementById('audioSendBtn').disabled = false;
-      makeCurlBox('audioCurl', 'curl -X POST -F "file=@audio.wav" ' + baseUrl + '/v1/audio/transcriptions');
+      setRecordedAudio(wavBlob, 'Recorded ' + duration + 's (' + sizeKb + ' KB)');
       document.getElementById('recordTime').textContent = '00:00';
+      showResponse('录音完成 ' + duration + 's，可点击 POST /v1/audio/transcriptions 转写。', 0, 0);
     }
+
+    updateMicAvailabilityUi();
 
     async function getConfig() {
       switchTab('admin');
@@ -762,13 +944,14 @@
     }
 
     window.activateModel = activateModel;
+    window.activateSenseVoice = activateSenseVoice;
     window.testHealth = testHealth;
     window.testModels = testModels;
     window.testChat = testChat;
     window.testAudio = testAudio;
     window.getConfig = getConfig;
     window.setConfig = setConfig;
-    window.onWavSelected = onWavSelected;
+    window.onAudioSelected = onAudioSelected;
     window.copyCurl = copyCurl;
 
     refreshStatus();

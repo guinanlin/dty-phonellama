@@ -55,6 +55,14 @@ class EdgeServer(
   companion object {
     const val DEFAULT_HOST = "127.0.0.1"
     const val DEFAULT_PORT = 8888
+    const val DEFAULT_WS_PORT = DEFAULT_PORT + 1
+    /** Canonical Volcengine-compatible path (with /api prefix). */
+    const val VOLC_ASR_WS_PATH = "/api/v3/sauc/bigmodel_async"
+    /**
+     * Alias without `/api` — some VoiceStick/PhoneLlama clients use this form.
+     * Both paths are accepted by [com.google.ai.edge.gallery.edgeserver.asr.volc.VolcAsrWebSocketServer].
+     */
+    const val VOLC_ASR_WS_PATH_ALIAS = "/v3/sauc/bigmodel_async"
     const val DEFAULT_TIMEOUT_SECONDS = 180L  // 3 min — allows large/reasoning models to respond
     // Fallback mini-UI used when the assets HTML is not available.
     const val DEFAULT_UI_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><title>PhoneLlama</title></head><body><h1>PhoneLlama</h1><p>UI asset not found. Please open the app.</p></body></html>"""
@@ -327,14 +335,15 @@ class EdgeServer(
   }
 
   private fun handleAudioTranscription(session: IHTTPSession): Response {
-    val engine = activeAsrEngine
-      ?: return errorResponse(503, "No SenseVoice ASR model loaded")
     val contentType = session.headers.entries
       .firstOrNull { it.key.equals("content-type", ignoreCase = true) }
       ?.value
       ?.lowercase()
       ?: ""
     return try {
+      // Read the request body before checking the engine. If we return early without
+      // consuming the body, NanoHTTPD closes the connection while the client is still
+      // sending the multipart file and the browser reports "Failed to fetch".
       val wavBytes = if (contentType.startsWith("multipart/form-data")) {
         val files = HashMap<String, String>()
         session.parseBody(files)
@@ -345,6 +354,12 @@ class EdgeServer(
         readBinaryBody(session, MAX_AUDIO_BODY_BYTES)
       }
       if (wavBytes.isEmpty()) return errorResponse(400, "Empty audio request body")
+
+      val engine = activeAsrEngine
+        ?: return errorResponse(
+          503,
+          "No SenseVoice ASR model loaded. Activate SenseVoice-Small via the app or POST /v1/models/SenseVoice-Small/activate."
+        )
       val result = engine.transcribe(wavBytes)
       val response = JsonObject().apply {
         addProperty("text", result.text)

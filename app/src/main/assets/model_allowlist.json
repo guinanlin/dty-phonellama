@@ -1,0 +1,66 @@
+{
+  "models": [
+    {
+      "name": "Gemma-4-E2B-it",
+      "modelId": "litert-community/gemma-4-E2B-it-litert-lm",
+      "modelFile": "gemma-4-E2B-it.litertlm",
+      "description": "A variant of Gemma 4 E2B ready for deployment on Android using LiteRT-LM. It supports multi-modality input, with up to 32K context length.",
+      "sizeInBytes": 2588147712,
+      "minDeviceMemoryInGb": 8,
+      "commitHash": "6e5c4f1e395deb959c494953478fa5cec4b8008f",
+      "llmSupportImage": true,
+      "llmSupportAudio": true,
+      "capabilities": ["llm_thinking", "speculative_decoding"],
+      "defaultConfig": {
+        "topK": 64,
+        "topP": 0.95,
+        "temperature": 1.0,
+        "maxContextLength": 32000,
+        "maxTokens": 4000,
+        "accelerators": "cpu,gpu"
+      },
+      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_agent_chat", "llm_ask_image", "llm_ask_audio"],
+      "bestForTaskTypes": ["llm_chat", "llm_prompt_lab", "llm_agent_chat", "llm_ask_image", "llm_ask_audio"]
+    },
+    {
+      "name": "Gemma-4-E4B-it",
+      "modelId": "litert-community/gemma-4-E4B-it-litert-lm",
+      "modelFile": "gemma-4-E4B-it.litertlm",
+      "description": "A variant of Gemma 4 E4B ready for deployment on Android using LiteRT-LM. It supports multi-modality input, with up to 32K context length.",
+      "sizeInBytes": 3659530240,
+      "minDeviceMemoryInGb": 12,
+      "commitHash": "28299f30ee4d43294517a4ac93abd6163412f07f",
+      "llmSupportImage": true,
+      "llmSupportAudio": true,
+      "capabilities": ["llm_thinking", "speculative_decoding"],
+      "defaultConfig": {
+        "topK": 64,
+        "topP": 0.95,
+        "temperature": 1.0,
+        "maxContextLength": 32000,
+        "maxTokens": 4000,
+        "accelerators": "cpu,gpu"
+      },
+      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_agent_chat", "llm_ask_image", "llm_ask_audio"],
+      "bestForTaskTypes": ["llm_chat", "llm_prompt_lab", "llm_agent_chat", "llm_ask_image", "llm_ask_audio"]
+    },
+    {
+      "name": "Gemma3-1B-IT",
+      "modelId": "litert-community/Gemma3-1B-IT",
+      "modelFile": "gemma3-1b-it-int4.litertlm",
+      "description": "A variant of [google/Gemma-3-1B-IT](https://huggingface.co/google/Gemma-3-1B-IT) with 4-bit quantization ready for deployment on Android using the LiteRT-LM runtime.",
+      "sizeInBytes": 584417280,
+      "minDeviceMemoryInGb": 6,
+      "commitHash": "42d538a932e8d5b12e6b3b455f5572560bd60b2c",
+      "defaultConfig": {
+        "topK": 64,
+        "topP": 0.95,
+        "temperature": 1.0,
+        "maxTokens": 1024,
+        "accelerators": "gpu,cpu"
+      },
+      "taskTypes": ["llm_chat", "llm_prompt_lab"],
+      "bestForTaskTypes": ["llm_chat", "llm_prompt_lab"]
+    }
+  ]
+}

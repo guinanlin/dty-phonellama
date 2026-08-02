@@ -22,6 +22,7 @@ import androidx.core.app.NotificationCompat
 import com.google.ai.edge.gallery.MainActivity
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.runtime.LlmModelHelper
+import com.google.ai.edge.gallery.edgeserver.asr.volc.VolcAsrWebSocketServer
 import com.google.ai.edge.gallery.runtime.asr.AsrEngine
 import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +37,7 @@ private const val TAG = "EdgeServerManager"
 data class EdgeServerState(
   val isRunning: Boolean = false,
   val port: Int = EdgeServer.DEFAULT_PORT,
+  val wsPort: Int = EdgeServer.DEFAULT_WS_PORT,
   val lanMode: Boolean = true,
   val activeModelName: String = "",
   val requestCount: Int = 0,
@@ -49,6 +51,7 @@ data class EdgeServerState(
  */
 object EdgeServerManager {
   private var server: EdgeServer? = null
+  private var asrWebSocketServer: VolcAsrWebSocketServer? = null
 
   /** Public read-only accessor for stats overlays (e.g. tokens/sec in DeviceStatsBar). */
   val currentServer: EdgeServer? get() = server
@@ -81,9 +84,18 @@ object EdgeServerManager {
     server?.knownModelNames = _knownModelNames
     try {
       server!!.start(NanoHTTPDDefaultTimeout, true)
+      val wsPort = if (port == EdgeServer.DEFAULT_PORT) EdgeServer.DEFAULT_WS_PORT else port + 1
+      asrWebSocketServer =
+        VolcAsrWebSocketServer(
+          bindHost = host,
+          bindPort = wsPort,
+          engineSupplier = { server?.activeAsrEngine ?: boundAsrEngine },
+        )
+      asrWebSocketServer!!.start()
       _state.value = EdgeServerState(
         isRunning = true,
         port = port,
+        wsPort = wsPort,
         lanMode = lanMode,
         activeModelName = boundDisplayName,
         requestCount = _state.value.requestCount,
@@ -102,6 +114,12 @@ object EdgeServerManager {
   }
 
   fun stop(context: Context) {
+    try {
+      asrWebSocketServer?.stop(1000)
+    } catch (e: Exception) {
+      Log.w(TAG, "Error stopping ASR WebSocket server", e)
+    }
+    asrWebSocketServer = null
     server?.stop()
     server = null
     _state.value = _state.value.copy(isRunning = false)

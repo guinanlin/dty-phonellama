@@ -38,8 +38,8 @@ android {
     targetSdk = 35
     versionCode = providers.environmentVariable("VERSION_CODE")
         .map { it.toInt() }
-        .getOrElse(10032)
-    versionName = providers.environmentVariable("VERSION_NAME").getOrElse("1.0.32")
+        .getOrElse(10047)
+    versionName = providers.environmentVariable("VERSION_NAME").getOrElse("1.0.47")
 
     // Needed for HuggingFace auth workflows.
     // Use the scheme of the "Redirect URLs" in HuggingFace app.
@@ -94,8 +94,13 @@ kotlin {
 }
 
 dependencies {
-  // Vendored sherpa-onnx Android AAR (downloaded by CI / scripts/fetch-sherpa-onnx.sh).
-  implementation(files("libs/sherpa-onnx-1.13.4.aar"))
+  // sherpa-onnx Kotlin bindings extracted from the 1.12.17 QNN APK
+  // (scripts/fetch-sherpa-qnn-natives.sh). These MUST come from the QNN build, not the
+  // stock release: the QNN native .so calls GetObjectField("qnnConfig") in newFromFile
+  // and returns Object[] from getResult(). Stock 1.12.17 lacks the QnnConfig field
+  // (crash at init) and stock 1.13.x getResult returns a single object (crash at decode).
+  // Only the QNN APK's own classes match the native on both signatures.
+  implementation(files("libs/sherpa-onnx-qnn-1.12.17.jar"))
   implementation(libs.commons.compress)
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -113,6 +118,8 @@ dependencies {
   implementation(libs.androidx.datastore)
   implementation(libs.com.google.code.gson)
   implementation(libs.nanohttpd)
+  implementation(libs.java.websocket)
+  implementation(libs.concentus)
   implementation(libs.androidx.lifecycle.process)
   implementation(libs.androidx.security.crypto)
   implementation(libs.androidx.webkit)

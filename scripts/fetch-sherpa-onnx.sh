@@ -3,7 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${SHERPA_ONNX_VERSION:-1.13.4}"
+# Must match SHERPA_QNN_APK_VERSION in fetch-sherpa-qnn-natives.sh: the JNI
+# getResult() signature diverged after 1.12.x, so the AAR bindings and the QNN
+# native .so must be the same version.
+VERSION="${SHERPA_ONNX_VERSION:-1.12.17}"
 OUT_DIR="$ROOT/app/libs"
 OUT_FILE="$OUT_DIR/sherpa-onnx-${VERSION}.aar"
 URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${VERSION}/sherpa-onnx-${VERSION}.aar"

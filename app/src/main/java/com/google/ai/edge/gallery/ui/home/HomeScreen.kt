@@ -36,9 +36,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
@@ -58,7 +60,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ListAlt
 import androidx.compose.material.icons.rounded.Error
-import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.rounded.Hub
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -121,7 +123,6 @@ import com.google.ai.edge.gallery.data.Category
 import com.google.ai.edge.gallery.data.CategoryInfo
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.ui.common.RevealingText
-import com.google.ai.edge.gallery.ui.common.SwipingText
 import com.google.ai.edge.gallery.ui.common.PerformanceTipDialog
 import com.google.ai.edge.gallery.ui.common.TaskIcon
 import com.google.ai.edge.gallery.ui.common.buildTrackableUrlAnnotatedString
@@ -291,7 +292,12 @@ fun HomeScreen(
         drawerState = drawerState,
         drawerContent = {
           ModalDrawerSheet {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(
+              modifier =
+                Modifier.padding(16.dp)
+                  .navigationBarsPadding()
+                  .verticalScroll(rememberScrollState())
+            ) {
               Row(modifier = Modifier.fillMaxWidth()) {
                 SquareDrawerItem(
                   label = stringResource(R.string.drawer_settings_label),
@@ -335,11 +341,12 @@ fun HomeScreen(
                 )
               }
               Spacer(modifier = Modifier.height(16.dp))
+              // Same 2-column grid as Settings/Models: empty right cell keeps square sizing.
               Row(modifier = Modifier.fillMaxWidth()) {
                 SquareDrawerItem(
-                  label = "Edge Server",
-                  description = "Run a local OpenAI-compatible API server",
-                  icon = Icons.Rounded.Flag,
+                  label = stringResource(R.string.drawer_edge_label),
+                  description = stringResource(R.string.drawer_edge_description),
+                  icon = Icons.Rounded.Hub,
                   onClick = {
                     scope.launch { drawerState.close() }
                     scope.launch {
@@ -357,8 +364,8 @@ fun HomeScreen(
                         )
                     ),
                 )
-                Spacer(modifier = Modifier.width(16.dp).weight(1f, fill = false))
-                Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.weight(1f).aspectRatio(1f))
               }
             }
           }
@@ -461,9 +468,9 @@ fun HomeScreen(
                   modifier =
                     Modifier.padding(
                         horizontal = if (gm4) 24.dp else 40.dp,
-                        vertical = if (gm4) 0.dp else 48.dp,
+                        vertical = if (gm4) 0.dp else 16.dp,
                       )
-                      .padding(top = 24.dp, bottom = 16.dp)
+                      .padding(top = if (gm4) 24.dp else 12.dp, bottom = 8.dp)
                       .semantics(mergeDescendants = true) {},
                   verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -573,8 +580,12 @@ fun HomeScreen(
         )
       },
       title = { Text(uiState.loadingModelAllowlistError) },
-      text = { Text("Please check your internet connection and try again later.") },
-      onDismissRequest = { modelManagerViewModel.loadModelAllowlist() },
+      text = {
+        Text(
+          "Could not load the remote model catalog. Local PhoneLlama models are still available — tap Retry to try again, or Cancel to continue offline."
+        )
+      },
+      onDismissRequest = { modelManagerViewModel.clearLoadModelAllowlistError() },
       confirmButton = {
         TextButton(onClick = { modelManagerViewModel.loadModelAllowlist() }) { Text("Retry") }
       },
@@ -589,78 +600,37 @@ fun HomeScreen(
 
 @Composable
 private fun AppTitle(enableAnimation: Boolean) {
-  val firstLineText = stringResource(R.string.app_name_first_part)
-  val secondLineText = stringResource(R.string.app_name_second_part)
-  val titleColor = MaterialTheme.customColors.appTitleGradientColors[1]
   val screenWidthInDp = LocalConfiguration.current.screenWidthDp.dp
   val fontSize = with(LocalDensity.current) { (screenWidthInDp.toPx() * 0.12f).toSp() }
   val titleStyle = homePageTitleStyle.copy(fontSize = fontSize, lineHeight = fontSize)
-
-  // First line text "Google AI" and its animation.
-  //
-  // The animation starts with the first line of text swiping in from left to right, progressively
-  // revealing itself in the title color (blue). Then, after a brief delay, the exact same text, but
-  // in the onSurface color (which is black in light mode), begins its own left-to-right swiping
-  // animation. This second animation is positioned directly on top of the first, appearing just as
-  // the initial reveal is finishing or has just completed, creating a layered and dynamic visual
-  // effect.
-  Box(modifier = Modifier.clearAndSetSemantics {}) {
-    var delay = ANIMATION_INIT_DELAY
-    if (enableAnimation) {
-      SwipingText(
-        text = firstLineText,
-        style = titleStyle,
-        color = titleColor,
-        animationDelay = delay,
-        animationDurationMs = TITLE_FIRST_LINE_ANIMATION_DURATION,
-      )
-      delay += (TITLE_FIRST_LINE_ANIMATION_DURATION * 0.3).toLong()
+  val annotatedText = buildAnnotatedString {
+    withStyle(style = SpanStyle(color = MaterialTheme.colorScheme.onSurface)) {
+      append(stringResource(R.string.app_name_first_part))
     }
-    SwipingText(
-      text = firstLineText,
-      style = titleStyle,
-      color = MaterialTheme.colorScheme.onSurface,
-      animationDelay = if (enableAnimation) delay else 0,
-      animationDurationMs = if (enableAnimation) TITLE_FIRST_LINE_ANIMATION_DURATION else 0,
-    )
-  }
-  // Second line text "Edge Gallery" and its animation.
-  //
-  // The initial animation is the same as the first line text. Right before it is done, the final
-  // text with a gradient is revealed.
-  Box(modifier = Modifier.clearAndSetSemantics {}) {
-    var delay = TITLE_SECOND_LINE_ANIMATION_START
-    if (enableAnimation) {
-      SwipingText(
-        text = secondLineText,
-        style = titleStyle,
-        color = titleColor,
-        modifier = Modifier.offset(y = (-16).dp),
-        animationDelay = delay,
-        animationDurationMs = TITLE_SECOND_LINE_ANIMATION_DURATION,
-      )
-      delay += (TITLE_SECOND_LINE_ANIMATION_DURATION * 0.3).toInt()
-      SwipingText(
-        text = secondLineText,
-        style = titleStyle,
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.offset(y = (-16).dp),
-        animationDelay = delay,
-        animationDurationMs = TITLE_SECOND_LINE_ANIMATION_DURATION,
-      )
-      delay += (TITLE_SECOND_LINE_ANIMATION_DURATION * 0.6).toInt()
-    }
-    RevealingText(
-      text = secondLineText,
+    append(" ")
+    withStyle(
       style =
-        titleStyle.copy(
+        SpanStyle(
           brush = linearGradient(colors = MaterialTheme.customColors.appTitleGradientColors)
-        ),
-      modifier = Modifier.offset(x = (-16).dp, y = (-16).dp),
-      animationDelay = if (enableAnimation) delay else 0,
-      animationDurationMs = if (enableAnimation) TITLE_SECOND_LINE_ANIMATION_DURATION2 else 0,
-    )
+        )
+    ) {
+      append(stringResource(R.string.app_name_second_part))
+    }
   }
+
+  RevealingText(
+    text = "",
+    annotatedText = annotatedText,
+    style = titleStyle,
+    animationDelay = if (enableAnimation) ANIMATION_INIT_DELAY else 0,
+    animationDurationMs =
+      if (enableAnimation) {
+        TITLE_FIRST_LINE_ANIMATION_DURATION + TITLE_SECOND_LINE_ANIMATION_DURATION
+      } else {
+        0
+      },
+    extraTextPadding = 0.dp,
+  )
 }
 
 @Composable

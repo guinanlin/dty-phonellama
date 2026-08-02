@@ -96,6 +96,7 @@ fun SquareDrawerItem(
           label,
           color = MaterialTheme.colorScheme.onSurface,
           style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+          maxLines = 1,
         )
         Text(
           description,

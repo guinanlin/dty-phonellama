@@ -76,6 +76,7 @@ import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.google.ai.edge.gallery.R
 import com.google.ai.edge.gallery.data.Model
+import com.google.ai.edge.gallery.data.HfMirror
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
 import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.Task
@@ -165,6 +166,14 @@ fun DownloadAndTryButton(
 
   // Function to kick off download.
   val startDownload: (accessToken: String?) -> Unit = { accessToken ->
+    // Ungated: use hf-mirror for CN speed. Gated+token: stay on official HF — mirror 308s back
+    // to huggingface.co and Authorization is dropped on that cross-host redirect (HTTP 401).
+    model.url =
+      if (accessToken.isNullOrBlank()) {
+        HfMirror.toMirrorUrl(model.url)
+      } else {
+        HfMirror.toOfficialUrl(model.url)
+      }
     model.accessToken = accessToken
     checkNotificationPermissionAndStartDownload(
       context = context,
@@ -257,18 +266,18 @@ fun DownloadAndTryButton(
     scope.launch(Dispatchers.IO) {
       if (needToDownloadFirst) {
         downloadStarted = true
-        // For HuggingFace urls
-        if (model.url.startsWith("https://huggingface.co")) {
+        if (HfMirror.isHuggingFaceFamily(model.url)) {
           checkingToken = true
-
-          // Check if the url needs auth.
+          // Probe the official host — mirror 308-redirects gated repos and looks like 401 either way.
+          model.url = HfMirror.toOfficialUrl(model.url)
           Log.d(
             TAG,
             "Model '${model.name}' is from HuggingFace. Checking if the url needs auth to download",
           )
           val firstResponseCode = modelManagerViewModel.getModelUrlResponse(model = model)
           if (firstResponseCode == HttpURLConnection.HTTP_OK) {
-            Log.d(TAG, "Model '${model.name}' doesn't need auth. Start downloading the model...")
+            // Ungated: download via hf-mirror.com in-app (no Chrome).
+            Log.d(TAG, "Model '${model.name}' doesn't need auth. Start mirror download...")
             withContext(Dispatchers.Main) { startDownload(null) }
             return@launch
           } else if (firstResponseCode < 0) {
@@ -278,7 +287,10 @@ fun DownloadAndTryButton(
             showErrorDialog = true
             return@launch
           }
-          Log.d(TAG, "Model '${model.name}' needs auth. Start token exchange process...")
+          Log.d(
+            TAG,
+            "Model '${model.name}' needs auth (HTTP $firstResponseCode). Start token exchange...",
+          )
 
           // Get current token status
           val tokenStatusAndData = modelManagerViewModel.getTokenStatusAndData()
@@ -319,11 +331,11 @@ fun DownloadAndTryButton(
             }
           }
         }
-        // For other urls, just download the model.
+        // GitHub / other hosts: download directly in-app.
         else {
           Log.d(
             TAG,
-            "Model '${model.name}' is not from huggingface. Start downloading the model...",
+            "Model '${model.name}' url=${model.url.take(80)} — start in-app download (no HF OAuth)",
           )
           withContext(Dispatchers.Main) { startDownload(null) }
         }

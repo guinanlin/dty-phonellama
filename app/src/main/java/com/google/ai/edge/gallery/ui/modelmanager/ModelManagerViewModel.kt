@@ -101,12 +101,14 @@ private const val ALLOWLIST_BASE_URL =
  * These will never download anonymously so we hide them from the UI entirely.
  */
 private val GATED_MODEL_IDS = setOf(
-  "litert-community/Gemma3-1B-IT",
+  // Internal helper models for Tiny Garden / Mobile Actions — kept hidden because they are
+  // not part of the user-facing catalog.
   "litert-community/functiongemma-270m-ft-tiny-garden",
   "litert-community/functiongemma-270m-ft-mobile-actions",
   "litert-community/gemma-3-270m-it",
-  "google/gemma-3n-E2B-it-litert-lm",
-  "google/gemma-3n-E4B-it-litert-lm",
+  // NOTE: The Gemma-3n vision models and Gemma3-1B remain visible in the catalog (Ask Image /
+  // AI Chat) so the model list is always present, even though they require HuggingFace
+  // authorization to actually download.
 )
 
 private const val TEST_MODEL_ALLOW_LIST = ""
@@ -1119,27 +1121,42 @@ constructor(
         }
 
         if (modelAllowlist == null) {
-          // Load from github.
-          var version = BuildConfig.VERSION_NAME.replace(".", "_")
-          val url = getAllowlistUrl(version)
-          Log.d(TAG, "Loading model allowlist from internet. Url: $url")
-          val data = getJsonResponse<ModelAllowlist>(url = url)
-          modelAllowlist = data?.jsonObj
-
-          if (modelAllowlist == null) {
-            Log.w(TAG, "Failed to load model allowlist from internet. Trying to load it from disk")
-            modelAllowlist = readModelAllowlistFromDisk()
+          // Offline-first: PhoneLlama must always show its model catalog without any
+          // network. Order of preference:
+          //   1) disk cache (last successful network refresh)
+          //   2) allowlist bundled inside the APK assets (always present)
+          // A network refresh is only a best-effort background update and never blocks
+          // startup or erases the offline catalog.
+          modelAllowlist = readModelAllowlistFromDisk()
+          if (modelAllowlist != null) {
+            Log.d(TAG, "Loaded model allowlist from disk cache")
           } else {
-            Log.d(TAG, "Done: loading model allowlist from internet")
-            saveModelAllowlistToDisk(modelAllowlistContent = data?.textContent ?: "{}")
+            modelAllowlist = readModelAllowlistFromAssets()
+            if (modelAllowlist != null) {
+              Log.d(TAG, "Loaded model allowlist from bundled assets (offline)")
+            }
           }
-        }
 
-        if (modelAllowlist == null) {
-          _uiState.update {
-            uiState.value.copy(loadingModelAllowlistError = "Failed to load model list")
+          // Best-effort network refresh. Failures are silently ignored — the offline
+          // catalog above stays in effect.
+          val version = BuildConfig.VERSION_NAME.replace(".", "_")
+          val url = getAllowlistUrl(version)
+          Log.d(TAG, "Trying model allowlist refresh from internet. Url: $url")
+          val data = getJsonResponse<ModelAllowlist>(url = url)
+          if (data?.jsonObj != null) {
+            modelAllowlist = data.jsonObj
+            Log.d(TAG, "Done: refreshed model allowlist from internet")
+            saveModelAllowlistToDisk(modelAllowlistContent = data.textContent ?: "{}")
+          } else {
+            Log.d(TAG, "No network allowlist refresh; keeping offline catalog")
           }
-          return@launch
+
+          // As a final safety net, never leave the allowlist null — that would erase
+          // the whole model list. Fall back to an empty upstream list and rely on the
+          // PhoneLlama local catalog injected below.
+          if (modelAllowlist == null) {
+            modelAllowlist = ModelAllowlist(models = emptyList())
+          }
         }
 
         Log.d(TAG, "Allowlist: $modelAllowlist")
@@ -1285,10 +1302,12 @@ constructor(
         }
 
         // Auto-initialize the first downloaded LLM model so it's ready for API serving.
+        // This only loads a model that is ALREADY on disk — it never downloads anything.
         autoLoadFirstModel()
 
-        // Auto-download the first LLM model if nothing is downloaded yet (first boot)
-        autoDownloadFirstModelIfNeeded()
+        // NOTE: We intentionally do NOT auto-download any model on startup. Downloads
+        // must be user-initiated so opening the app never kicks off a large background
+        // download. (Previously autoDownloadFirstModelIfNeeded() ran here.)
 
         // Wait for AICore models statuses and update download indicators
         checkAICoreModelStatuses()
@@ -1370,6 +1389,18 @@ constructor(
       Log.d(TAG, "Done: saving model allowlist to disk.")
     } catch (e: Exception) {
       Log.e(TAG, "failed to write model allowlist to disk", e)
+    }
+  }
+
+  /** Reads the model allowlist bundled inside the APK assets (offline fallback). */
+  private fun readModelAllowlistFromAssets(): ModelAllowlist? {
+    return try {
+      val content =
+        context.assets.open(MODEL_ALLOWLIST_FILENAME).bufferedReader().use { it.readText() }
+      Gson().fromJson(content, ModelAllowlist::class.java)
+    } catch (e: Exception) {
+      Log.w(TAG, "No bundled model allowlist asset available", e)
+      null
     }
   }
 
